@@ -4,21 +4,18 @@ import path from 'path';
 const feedsFile = path.resolve('./pages/api/data/feeds.json');
 const presetsFile = path.resolve('./pages/api/data/presets.json');
 
-// Load feeds and merge with presets if feeds are empty
 export function loadExistingFeeds() {
-  // Ensure feeds.json exists
-  if (!fs.existsSync(feedsFile)) {
-    fs.writeFileSync(feedsFile, '[]');
-  }
+  // If feeds.json doesn't exist or is empty, write from presets
+  if (!fs.existsSync(feedsFile) || fs.readFileSync(feedsFile, 'utf-8').trim() === '[]') {
+    const presets = fs.existsSync(presetsFile)
+      ? JSON.parse(fs.readFileSync(presetsFile, 'utf-8'))
+      : [];
 
-  const feeds = JSON.parse(fs.readFileSync(feedsFile));
-
-  // If feeds.json is empty, populate with presets
-  if (feeds.length === 0 && fs.existsSync(presetsFile)) {
-    const presets = JSON.parse(fs.readFileSync(presetsFile));
     fs.writeFileSync(feedsFile, JSON.stringify(presets, null, 2));
     return presets;
   }
 
+  // Otherwise load the current feeds
+  const feeds = JSON.parse(fs.readFileSync(feedsFile, 'utf-8'));
   return feeds;
 }
