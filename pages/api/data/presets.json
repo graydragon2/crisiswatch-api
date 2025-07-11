@@ -1,0 +1,8 @@
+[
+  "https://www.dhs.gov/news/rss.xml",
+  "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+  "https://feeds.bbci.co.uk/news/world/rss.xml",
+  "https://www.reutersagency.com/feed/?best-topics=emergency,security&post_type=best",
+  "https://www.fema.gov/rss/updates.xml",
+  "https://www.weather.gov/alerts/wwaatmget.php?x=us&y=0"
+]
