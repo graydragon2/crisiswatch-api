@@ -10,8 +10,10 @@ function loadFeedsWithPresets() {
   const feeds = JSON.parse(fs.readFileSync(feedsFile));
   if (feeds.length === 0 && fs.existsSync(presetsFile)) {
     const presets = JSON.parse(fs.readFileSync(presetsFile));
-    fs.writeFileSync(feedsFile, JSON.stringify(presets, null, 2));
-    return presets;
+    const urls = presets.map(feed => feed.url);
+    fs.writeFileSync(feedsFile, JSON.stringify(urls, null, 2));
+    return urls;
+
   }
   return feeds;
 }
