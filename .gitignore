@@ -1,22 +1,5 @@
-# Dependencies
 node_modules/
-
-# Logs
-logs/
-*.log
-
-# Environment variables
 .env
-
-# App data
-# /data/feeds.json
-
-# Build
-dist/
-build/
-
-# IDEs and OS
-.vscode/
-.idea/
 .DS_Store
-Thumbs.db
+*.log
+/pages/api/data/feeds.json
