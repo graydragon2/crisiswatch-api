@@ -9,7 +9,7 @@ logs/
 .env
 
 # App data
-data/feeds.json
+# /data/feeds.json
 
 # Build
 dist/
