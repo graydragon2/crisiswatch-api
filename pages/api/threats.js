@@ -72,6 +72,12 @@ export default async function handler(req, res) {
       return { ...item, score };
     })
   );
-
+  // TEST HIGH THREAT INJECTION
+allArticles.push({
+  title: "Radiation leak at nuclear plant detected",
+  summary: "Authorities warn of catastrophic threat to nearby cities due to system failure at reactor.",
+  link: "https://example.com/test-threat",
+  pubDate: new Date().toISOString()
+});
   res.status(200).json({ threats });
 }
