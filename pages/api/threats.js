@@ -1,5 +1,4 @@
 // pages/api/threats.js
-
 import fs from 'fs';
 import path from 'path';
 import Parser from 'rss-parser';
@@ -9,12 +8,17 @@ const parser = new Parser();
 
 export default async function handler(req, res) {
   let feeds = [];
+
+  // Load saved RSS feed URLs
   if (fs.existsSync(feedsFile)) {
     feeds = JSON.parse(fs.readFileSync(feedsFile));
   }
 
-  if (!feeds.length) return res.status(400).json({ error: 'No feeds available' });
+  if (!feeds.length) {
+    return res.status(400).json({ error: 'No feeds available' });
+  }
 
+  // OpenAI threat scoring function
   const scoreThreat = async (text) => {
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -42,30 +46,35 @@ export default async function handler(req, res) {
       const raw = data.choices?.[0]?.message?.content || "0";
       return parseInt(raw.match(/\d+/)?.[0]) || 0;
     } catch (err) {
-      console.error("OpenAI error:", err);
+      console.error("OpenAI scoring error:", err);
       return 0;
     }
   };
 
-  const allItems = [];
+  // Fetch and score articles from each RSS feed
+  const allArticles = [];
 
   for (const feed of feeds) {
-    const parsed = await parser.parseURL(feed.url);
-    const items = parsed.items.map(item => ({
-      title: item.title,
-      link: item.link,
-      summary: item.contentSnippet || item.content || item.summary || '',
-      pubDate: item.pubDate,
-    }));
-    allItems.push(...items);
+    try {
+      const parsed = await parser.parseURL(feed.url);
+      const items = parsed.items.map(item => ({
+        title: item.title,
+        link: item.link,
+        summary: item.contentSnippet || item.content || '',
+        pubDate: item.pubDate
+      }));
+      allArticles.push(...items);
+    } catch (err) {
+      console.error(`Failed to parse feed: ${feed.url}`, err.message);
+    }
   }
 
-  const scored = await Promise.all(
-    allItems.map(async (item) => {
-      const score = await scoreThreat(item.title + ". " + item.summary);
+  const threats = await Promise.all(
+    allArticles.map(async (item) => {
+      const score = await scoreThreat(`${item.title}. ${item.summary}`);
       return { ...item, score };
     })
   );
 
-  res.status(200).json({ threats: scored });
+  res.status(200).json({ threats });
 }
