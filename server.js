@@ -39,7 +39,7 @@ app.get('/api/feeds', async (req, res) => {
   }
 });
 
-// ✅ Dark web lookup route
+// ✅ Dark Web Email Check
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
   const apiKey = process.env.LEAKCHECK_API_KEY;
@@ -59,4 +59,12 @@ app.get('/api/darkweb', async (req, res) => {
 
     res.json(json);
   } catch (err) {
-    console.error(
+    console.error('Backend error:', err);
+    res.status(500).json({ error: 'Internal server error', debug: err.message });
+  }
+});
+
+// ✅ Start server
+app.listen(port, () => {
+  console.log(`CrisisWatch API listening on port ${port}`);
+});
