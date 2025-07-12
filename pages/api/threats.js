@@ -20,9 +20,6 @@ export default async function handler(req, res) {
 
   // OpenAI threat scoring function
   const scoreThreat = async (text) => {
-    
-return 9;
-
 try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
