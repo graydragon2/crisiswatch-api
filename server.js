@@ -2,10 +2,12 @@ import express from 'express';
 import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import Parser from 'rss-parser';
 
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
+const parser = new Parser();
 
 app.use(cors());
 
@@ -23,19 +25,17 @@ app.get('/api/feeds', async (req, res) => {
   ];
 
   try {
-    const responses = await Promise.all(
-      urls.map(url => fetch(url).then(r => r.text()))
+    const results = await Promise.all(
+      urls.map(async url => {
+        const feed = await parser.parseURL(url);
+        return { url, title: feed.title, items: feed.items.slice(0, 5) };
+      })
     );
 
-    res.json({
-      feeds: responses.map((data, idx) => ({
-        url: urls[idx],
-        xml: data
-      }))
-    });
+    res.json({ feeds: results });
   } catch (error) {
-    console.error('Feed fetch error:', error);
-    res.status(500).json({ error: 'Failed to fetch RSS feeds' });
+    console.error('RSS feed parse error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch or parse RSS feeds', debug: error.message });
   }
 });
 
