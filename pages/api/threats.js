@@ -9,7 +9,6 @@ const parser = new Parser();
 export default async function handler(req, res) {
   let feeds = [];
 
-  // Load saved RSS feed URLs
   if (fs.existsSync(feedsFile)) {
     feeds = JSON.parse(fs.readFileSync(feedsFile));
   }
@@ -18,7 +17,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No feeds available' });
   }
 
-  // OpenAI threat scoring function
   const scoreThreat = async (text) => {
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -51,7 +49,6 @@ export default async function handler(req, res) {
     }
   };
 
-  // Fetch and score articles from each RSS feed
   const allArticles = [];
 
   for (const feed of feeds) {
