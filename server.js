@@ -16,6 +16,29 @@ app.get('/api/darkweb', async (req, res) => {
   if (!email || !apiKey) {
     return res.status(400).json({ error: 'Missing email or API key' });
   }
+app.get('/api/feeds', async (req, res) => {
+  const urls = [
+    'https://feeds.bbci.co.uk/news/world/rss.xml',
+    'https://rss.cnn.com/rss/edition_world.rss',
+    'https://www.reutersagency.com/feed/?best-topics=politics' // example, can be adjusted
+  ];
+
+  try {
+    const responses = await Promise.all(
+      urls.map(url => fetch(url).then(r => r.text()))
+    );
+
+    res.json({
+      feeds: responses.map((data, idx) => ({
+        url: urls[idx],
+        xml: data
+      }))
+    });
+  } catch (error) {
+    console.error('Feed fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch RSS feeds' });
+  }
+});
 
   try {
     const leakURL = `https://leakcheck.net/api/public?key=${apiKey}&check=${encodeURIComponent(email)}&type=email`;
