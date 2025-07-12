@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Reuters World News",
+    "url": "http://feeds.reuters.com/Reuters/worldNews"
+  },
+  {
+    "name": "DHS Alerts",
+    "url": "https://www.dhs.gov/alerts/feed"
+  },
+  {
+    "name": "CNN Top Stories",
+    "url": "http://rss.cnn.com/rss/cnn_topstories.rss"
+  }
+]
