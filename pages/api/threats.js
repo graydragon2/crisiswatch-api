@@ -1,4 +1,3 @@
-// pages/api/threats.js
 import fs from 'fs';
 import path from 'path';
 import Parser from 'rss-parser';
@@ -9,7 +8,6 @@ const parser = new Parser();
 export default async function handler(req, res) {
   let feeds = [];
 
-  // Load saved RSS feed URLs
   if (fs.existsSync(feedsFile)) {
     feeds = JSON.parse(fs.readFileSync(feedsFile));
   }
@@ -18,11 +16,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No feeds available' });
   }
 
-  // OpenAI threat scoring function
   const scoreThreat = async (text) => {
-return 9;
-console.log;
-try {
+    try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -54,7 +49,6 @@ try {
     }
   };
 
-  // Fetch articles from each feed
   const allArticles = [];
 
   for (const feed of feeds) {
@@ -72,16 +66,13 @@ try {
     }
   }
 
-  // Add a test high-threat article BEFORE scoring
   allArticles.push({
     title: "Radiation leak at nuclear plant detected",
-    summary:
-      "Authorities warn of catastrophic threat to nearby cities due to system failure at reactor.",
+    summary: "Authorities warn of catastrophic threat to nearby cities due to system failure at reactor.",
     link: "https://example.com/test-threat",
     pubDate: new Date().toISOString(),
   });
 
-  // Score all articles
   const threats = await Promise.all(
     allArticles.map(async (item) => {
       const score = await scoreThreat(`${item.title}. ${item.summary}`);
