@@ -9,53 +9,41 @@ const port = process.env.PORT || 3001;
 
 app.use(cors());
 
-app.get('/api/darkweb', async (req, res) => {
-  const email = req.query.email;
-  const apiKey = process.env.LEAKCHECK_API_KEY;
+// Root test route
+app.get('/', (req, res) => {
+  res.send('CrisisWatch API is live');
+});
 
-  if (!email || !apiKey) {
-    return res.status(400).json({ error: 'Missing email or API key' });
-  }
+// ✅ Feeds endpoint
 app.get('/api/feeds', async (req, res) => {
   const urls = [
     'https://feeds.bbci.co.uk/news/world/rss.xml',
     'https://rss.cnn.com/rss/edition_world.rss',
-    'https://www.reutersagency.com/feed/?best-topics=politics' // example, can be adjusted
+    'https://www.reutersagency.com/feed/?best-topics=politics'
   ];
 
   try {
-    const responses = await Promise.all(
-      urls.map(url => fetch(url).then(r => r.text()))
-    );
+    const feeds = [];
 
-    res.json({
-      feeds: responses.map((data, idx) => ({
-        url: urls[idx],
-        xml: data
-      }))
-    });
+    for (const url of urls) {
+      try {
+        const response = await fetch(url);
+        const text = await response.text();
+        feeds.push({ url, xml: text });
+      } catch (err) {
+        console.warn(`Failed to fetch ${url}`, err.message);
+        feeds.push({ url, error: err.message });
+      }
+    }
+
+    res.json({ feeds });
   } catch (error) {
     console.error('Feed fetch error:', error);
     res.status(500).json({ error: 'Failed to fetch RSS feeds' });
   }
 });
 
-  try {
-    const leakURL = `https://leakcheck.net/api/public?key=${apiKey}&check=${encodeURIComponent(email)}&type=email`;
-    const response = await fetch(leakURL);
-    const json = await response.json();
-
-    if (!response.ok || json.error) {
-      return res.status(502).json({ error: 'LeakCheck API error', details: json });
-    }
-
-    res.json(json);
-  } catch (err) {
-    console.error('Backend error:', err);
-    res.status(500).json({ error: 'Internal server error', debug: err.message });
-  }
-});
-
-app.listen(port, () => {
-  console.log(`CrisisWatch API listening on port ${port}`);
-});
+// ✅ DarkWeb endpoint
+app.get('/api/darkweb', async (req, res) => {
+  const email = req.query.email;
+  const apiKey = process.env.LEAKCHECK_API_KEY;
