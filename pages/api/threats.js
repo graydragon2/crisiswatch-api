@@ -9,6 +9,7 @@ const parser = new Parser();
 export default async function handler(req, res) {
   let feeds = [];
 
+  // Load saved RSS feed URLs
   if (fs.existsSync(feedsFile)) {
     feeds = JSON.parse(fs.readFileSync(feedsFile));
   }
@@ -17,6 +18,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No feeds available' });
   }
 
+  // OpenAI threat scoring function
   const scoreThreat = async (text) => {
     try {
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -30,7 +32,8 @@ export default async function handler(req, res) {
           messages: [
             {
               role: "system",
-              content: "You are a cybersecurity analyst. Score the following article from 0 (no threat) to 10 (critical threat). Only return a number.",
+              content:
+                "You are a cybersecurity analyst. Score the following article from 0 (no threat) to 10 (critical threat). Only return a number.",
             },
             {
               role: "user",
@@ -49,16 +52,17 @@ export default async function handler(req, res) {
     }
   };
 
+  // Fetch articles from each feed
   const allArticles = [];
 
   for (const feed of feeds) {
     try {
       const parsed = await parser.parseURL(feed.url);
-      const items = parsed.items.map(item => ({
+      const items = parsed.items.map((item) => ({
         title: item.title,
         link: item.link,
         summary: item.contentSnippet || item.content || '',
-        pubDate: item.pubDate
+        pubDate: item.pubDate,
       }));
       allArticles.push(...items);
     } catch (err) {
@@ -66,18 +70,22 @@ export default async function handler(req, res) {
     }
   }
 
+  // Add a test high-threat article BEFORE scoring
+  allArticles.push({
+    title: "Radiation leak at nuclear plant detected",
+    summary:
+      "Authorities warn of catastrophic threat to nearby cities due to system failure at reactor.",
+    link: "https://example.com/test-threat",
+    pubDate: new Date().toISOString(),
+  });
+
+  // Score all articles
   const threats = await Promise.all(
     allArticles.map(async (item) => {
       const score = await scoreThreat(`${item.title}. ${item.summary}`);
       return { ...item, score };
     })
   );
-  // TEST HIGH THREAT INJECTION
-allArticles.push({
-  title: "Radiation leak at nuclear plant detected",
-  summary: "Authorities warn of catastrophic threat to nearby cities due to system failure at reactor.",
-  link: "https://example.com/test-threat",
-  pubDate: new Date().toISOString()
-});
+
   res.status(200).json({ threats });
 }
