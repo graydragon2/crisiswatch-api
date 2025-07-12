@@ -1,8 +1,8 @@
-import express from 'express';
-import fetch from 'node-fetch';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import Parser from 'rss-parser';
+const express = require('express');
+const fetch = require('node-fetch');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const Parser = require('rss-parser');
 
 dotenv.config();
 const app = express();
@@ -64,7 +64,7 @@ app.get('/api/darkweb', async (req, res) => {
   }
 });
 
-// ✅ Start server
 app.listen(port, () => {
   console.log(`CrisisWatch API listening on port ${port}`);
 });
+
