@@ -33,6 +33,8 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
+console.log('🔥 OpenAI response:', JSON.stringify(data, null, 2));
+const message = data.choices?.[0]?.message?.content;
     const message = data.choices?.[0]?.message?.content;
     console.log('🧠 Raw AI message:', message);
 
