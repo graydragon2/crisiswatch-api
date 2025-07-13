@@ -1,5 +1,5 @@
 // pages/api/score.js
-
+console.log('OpenAI API Key used:', openaiApiKey);
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
