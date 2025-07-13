@@ -1,14 +1,11 @@
 {
   "name": "crisiswatch-api",
   "version": "1.0.0",
-<<<<<<< HEAD
       
   "main": "server.js",
 
   "description": "Backend for CrisisWatch",
-=======
-  "main": "server.js",
->>>>>>> 5cde6d3 (Initial commit to main)
+
   "scripts": {
     "start": "node server.js"
   },
