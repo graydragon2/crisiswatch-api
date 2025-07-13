@@ -36,6 +36,13 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
+// 🔍 Log response BEFORE checking status
+console.log('OpenAI raw response:', JSON.stringify(data, null, 2));
+
+if (!response.ok) {
+  return res.status(response.status).json({ error: data.error?.message || 'OpenAI API error' });
+}
+
     // ✅ Log the actual OpenAI response
     console.log('OpenAI response:', JSON.stringify(data, null, 2));
 
