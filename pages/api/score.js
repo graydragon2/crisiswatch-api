@@ -1,5 +1,3 @@
-// pages/api/score.js
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -24,46 +22,42 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'system',
-            content: 'You are an AI threat analyst. Return only a JSON with a numeric "score" field from 1 (low threat) to 10 (high threat).',
+            content:
+              'You are an AI threat analyst. Return ONLY a JSON string like: {"score": 7} — with a score between 1 (low) and 10 (high).',
           },
           {
             role: 'user',
             content: text,
           },
         ],
+        temperature: 0.4,
       }),
     });
 
     const data = await response.json();
 
-    // ✅ Debug: Log entire OpenAI response
-    console.log("🧠 OpenAI Response:", JSON.stringify(data, null, 2));
-
     if (!response.ok) {
       return res.status(response.status).json({ error: data.error?.message || 'OpenAI API error' });
     }
 
-    const content = data.choices?.[0]?.message?.content || '';
-    let score = null;
+    const message = data.choices?.[0]?.message?.content;
+    let scoreMatch;
 
-    // Try JSON.parse first
     try {
-      const parsed = JSON.parse(content);
-      score = parsed.score;
+      const parsed = JSON.parse(message);
+      if (parsed && typeof parsed.score === 'number') {
+        return res.status(200).json({ score: parsed.score });
+      }
     } catch {
-      // Fallback: regex parse for score
-      const match = content.match(/"score"\s*:\s*(\d+)/i);
-      if (match) score = parseInt(match[1], 10);
+      scoreMatch = message?.match(/"score"\s*:\s*(\d+)/i);
+      if (scoreMatch) {
+        return res.status(200).json({ score: parseInt(scoreMatch[1], 10) });
+      }
     }
 
-    if (!score || isNaN(score) || score < 1 || score > 10) {
-      console.error("❌ Invalid score content:", content);
-      return res.status(500).json({ error: 'Invalid score returned from AI' });
-    }
-
-    res.status(200).json({ score });
+    return res.status(500).json({ error: 'Invalid score returned from AI' });
   } catch (error) {
-    console.error('❌ Score API error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('AI scoring error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
