@@ -22,42 +22,30 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'system',
-            content:
-              'You are an AI threat analyst. Return ONLY a JSON string like: {"score": 7} — with a score between 1 (low) and 10 (high).',
+            content: 'You are an AI threat analyst. Return a JSON object like { "score": <1-10> } based only on the text provided.',
           },
           {
             role: 'user',
             content: text,
           },
         ],
-        temperature: 0.4,
       }),
     });
 
     const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({ error: data.error?.message || 'OpenAI API error' });
-    }
-
     const message = data.choices?.[0]?.message?.content;
-    let scoreMatch;
 
-    try {
-      const parsed = JSON.parse(message);
-      if (parsed && typeof parsed.score === 'number') {
-        return res.status(200).json({ score: parsed.score });
-      }
-    } catch {
-      scoreMatch = message?.match(/"score"\s*:\s*(\d+)/i);
-      if (scoreMatch) {
-        return res.status(200).json({ score: parseInt(scoreMatch[1], 10) });
-      }
+    const match = message && message.match(/"score"\s*:\s*(\d+)/i);
+    const score = match ? parseInt(match[1], 10) : null;
+
+    if (!score || isNaN(score)) {
+      console.error('Invalid AI response:', message);
+      return res.status(500).json({ error: 'Invalid score returned from AI' });
     }
 
-    return res.status(500).json({ error: 'Invalid score returned from AI' });
+    res.status(200).json({ score });
   } catch (error) {
-    console.error('AI scoring error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error('Score API error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 }
