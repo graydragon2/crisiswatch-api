@@ -1,4 +1,5 @@
 // pages/api/score.js
+return res.status(500).json({ error: 'Test crash — render is updating' });
 console.log('OpenAI API Key used:', openaiApiKey);
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
