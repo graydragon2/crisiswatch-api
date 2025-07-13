@@ -1,6 +1,10 @@
 {
   "name": "crisiswatch-api",
   "version": "1.0.0",
+      
+  "main": "server.js",
+
+  "description": "Backend for CrisisWatch",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
