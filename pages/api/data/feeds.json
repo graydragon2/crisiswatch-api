@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 [
   { "url": "https://rss.cnn.com/rss/edition.rss" },
   { "url": "https://feeds.bbci.co.uk/news/rss.xml" },
   { "url": "https://www.reutersagency.com/feed/?best-topics=world" }
 ]
+=======
+[]
+>>>>>>> 5cde6d3 (Initial commit to main)

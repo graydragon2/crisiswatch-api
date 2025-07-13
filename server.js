@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 const express = require('express');
@@ -5,10 +6,17 @@ const fetch = require('node-fetch');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const Parser = require('rss-parser');
+=======
+import express from 'express';
+import fetch from 'node-fetch';
+import cors from 'cors';
+import dotenv from 'dotenv';
+>>>>>>> 5cde6d3 (Initial commit to main)
 
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
+<<<<<<< HEAD
 const parser = new Parser();
 
 app.use(cors());
@@ -42,6 +50,11 @@ app.get('/api/feeds', async (req, res) => {
 });
 
 // ✅ Dark Web Email Check
+=======
+
+app.use(cors());
+
+>>>>>>> 5cde6d3 (Initial commit to main)
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
   const apiKey = process.env.LEAKCHECK_API_KEY;
@@ -69,4 +82,7 @@ app.get('/api/darkweb', async (req, res) => {
 app.listen(port, () => {
   console.log(`CrisisWatch API listening on port ${port}`);
 });
+<<<<<<< HEAD
 
+=======
+>>>>>>> 5cde6d3 (Initial commit to main)
