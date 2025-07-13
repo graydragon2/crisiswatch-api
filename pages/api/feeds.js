@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-// pages/api/feeds.js
-=======
->>>>>>> 5cde6d3 (Initial commit to main)
+
 import fs from 'fs';
 import path from 'path';
 
@@ -22,40 +19,35 @@ function loadFeedsWithPresets() {
 }
 
 export default function handler(req, res) {
-<<<<<<< HEAD
-=======
   // ✅ GET handler - returns all feeds
->>>>>>> 5cde6d3 (Initial commit to main)
   if (req.method === 'GET') {
     const feeds = loadFeedsWithPresets();
     return res.status(200).json({ feeds });
   }
 
-<<<<<<< HEAD
-=======
   // ✅ POST handler - add a new feed
->>>>>>> 5cde6d3 (Initial commit to main)
+
   if (req.method === 'POST') {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'Missing URL' });
 
     const feeds = JSON.parse(fs.readFileSync(feedsFile));
-<<<<<<< HEAD
+
     if (feeds.some(feed => feed.url === url)) {
       return res.status(409).json({ error: 'Feed already exists' });
     }
 
     feeds.push({ url });
-=======
+
     if (feeds.includes(url)) return res.status(409).json({ error: 'Feed already exists' });
 
     feeds.push(url);
->>>>>>> 5cde6d3 (Initial commit to main)
+
     fs.writeFileSync(feedsFile, JSON.stringify(feeds, null, 2));
     return res.status(201).json({ message: 'Feed added' });
   }
 
-<<<<<<< HEAD
+
   if (req.method === 'DELETE') {
     const { url } = req.body;
     let feeds = JSON.parse(fs.readFileSync(feedsFile));
@@ -68,7 +60,7 @@ export default function handler(req, res) {
 }
 
 
-=======
+
   // ✅ DELETE handler - remove a feed
   if (req.method === 'DELETE') {
     const { url } = req.body;
@@ -82,4 +74,4 @@ export default function handler(req, res) {
   // Default
   res.status(405).json({ error: 'Method not allowed' });
 }
->>>>>>> 5cde6d3 (Initial commit to main)
+
