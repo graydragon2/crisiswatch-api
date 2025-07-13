@@ -24,7 +24,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'system',
-            content: 'You are an AI threat analyst. Return a JSON with only a "score" field from 1 (low threat) to 10 (high threat) based on the text input.',
+            content: 'You are an AI threat analyst. ONLY return a JSON string with a single "score" field from 1 to 10 based on the user input. No other text.',
           },
           {
             role: 'user',
