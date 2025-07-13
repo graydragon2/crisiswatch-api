@@ -1,3 +1,5 @@
+// pages/api/score.js
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -22,7 +24,8 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'system',
-            content: 'You are an AI threat analyst. Only respond with a single line JSON like {"score": 7} — a number from 1 (low threat) to 10 (high threat). Do NOT explain.',
+            content:
+              'You are an AI threat analyst. Return ONLY a JSON like this: { "score": 7 } where score is from 1 (low) to 10 (high). No explanation.',
           },
           {
             role: 'user',
@@ -33,27 +36,31 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
-console.log('🔥 OpenAI response:', JSON.stringify(data, null, 2));
-const message = data.choices?.[0]?.message?.content;
-    const message = data.choices?.[0]?.message?.content;
-    console.log('🧠 Raw AI message:', message);
 
-    let score;
+    // Log full response from OpenAI
+    console.log('🔥 OpenAI response:', JSON.stringify(data, null, 2));
+
+    const message = data.choices?.[0]?.message?.content || '';
+
+    // Attempt to parse the score using safe JSON parse
+    let parsed = null;
     try {
-      const json = JSON.parse(message);
-      score = json.score;
-    } catch {
-      const match = message && message.match(/"score"\s*:\s*(\d+)/i);
-      score = match ? parseInt(match[1], 10) : null;
+      parsed = JSON.parse(message);
+    } catch (e) {
+      // fallback regex
+      const match = message.match(/"score"\s*:\s*(\d+)/i);
+      if (match) {
+        parsed = { score: parseInt(match[1], 10) };
+      }
     }
 
-    if (!score || score < 1 || score > 10) {
+    if (!parsed || !parsed.score || isNaN(parsed.score)) {
       throw new Error('Invalid score returned from AI');
     }
 
-    res.status(200).json({ score });
+    res.status(200).json({ score: parsed.score });
   } catch (error) {
     console.error('AI scoring error:', error);
-    res.status(500).json({ error: 'Failed to score threat' });
+    res.status(500).json({ error: error.message || 'Internal server error' });
   }
 }
