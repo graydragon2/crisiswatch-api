@@ -1,5 +1,3 @@
-// pages/api/score.js
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -35,32 +33,25 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
-    const data = await response.json();
-    console.log('🔍 OpenAI raw response:', data); // <-- Add this
+    const message = data.choices?.[0]?.message?.content;
+    console.log('🧠 Raw AI message:', message);
 
-const content = data.choices?.[0]?.message?.content;
-const content = data.choices?.[0]?.message?.content;
-
-    console.log('AI raw response:', content); // 🔍 Log this for debugging
-
-    // Try parsing content directly as JSON
+    let score;
     try {
-      const parsed = JSON.parse(content);
-      if (typeof parsed.score === 'number') {
-        return res.status(200).json({ score: parsed.score });
-      }
+      const json = JSON.parse(message);
+      score = json.score;
     } catch {
-      // Fallback: extract with regex
-      const match = content?.match(/"score"\s*:\s*(\d+)/i);
-      if (match) {
-        const score = parseInt(match[1], 10);
-        return res.status(200).json({ score });
-      }
+      const match = message && message.match(/"score"\s*:\s*(\d+)/i);
+      score = match ? parseInt(match[1], 10) : null;
     }
 
-    return res.status(500).json({ error: 'Failed to extract score from AI response', raw: content });
+    if (!score || score < 1 || score > 10) {
+      throw new Error('Invalid score returned from AI');
+    }
+
+    res.status(200).json({ score });
   } catch (error) {
-    console.error('Score API error:', error);
-    return res.status(500).json({ error: 'Internal server error', debug: error.message });
+    console.error('AI scoring error:', error);
+    res.status(500).json({ error: 'Failed to score threat' });
   }
 }
