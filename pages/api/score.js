@@ -1,52 +1,56 @@
-import { NextResponse } from 'next/server';
+// pages/api/score.js
 
-export async function POST(req) {
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { text } = req.body;
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+
+  if (!text || !openaiApiKey) {
+    return res.status(400).json({ error: 'Missing input text or API key' });
+  }
+
   try {
-    const body = await req.json();
-    const { title, description, location } = body;
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an AI threat analyst. Return a JSON with only a "score" field from 1 (low threat) to 10 (high threat) based on the text input.',
+          },
+          {
+            role: 'user',
+            content: text,
+          },
+        ],
+      }),
+    });
 
-    // Rule-based fallback
-    const lowerTitle = title.toLowerCase();
-    const keywordsCritical = ["shooting", "explosion", "chemical", "hostage", "riots"];
-    const keywordsModerate = ["protest", "power outage", "flood", "suspicious"];
-    const localMatch = lowerTitle.includes(location.toLowerCase());
+    const data = await response.json();
 
-    const matchCritical = keywordsCritical.some(k => lowerTitle.includes(k));
-    const matchModerate = keywordsModerate.some(k => lowerTitle.includes(k));
-
-    let score = "Ignore";
-    if (matchCritical && localMatch) score = "Critical";
-    else if (matchModerate && localMatch) score = "Moderate";
-
-    // If scoring is ambiguous, escalate to OpenAI (optional)
-    if (process.env.OPENAI_API_KEY && score === "Moderate") {
-      const prompt = `You are a threat classification AI for a security monitoring app.\nClassify this event based on severity: Ignore / Moderate / Critical.\n\nUser location: ${location}\nEvent title: \"${title}\"\nEvent description: \"${description}\"\n\nExplain the score and return JSON: { \"score\": \"...\", \"reason\": \"...\" }`;
-
-      const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "gpt-4",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.2
-        })
-      });
-
-      const json = await openaiRes.json();
-      try {
-        const parsed = JSON.parse(json.choices[0].message.content);
-        return NextResponse.json({ score: parsed.score, reason: parsed.reason, ai: true });
-      } catch (e) {
-        console.warn("AI parse failed", json);
-      }
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data.error?.message || 'OpenAI API error' });
     }
 
-    return NextResponse.json({ score, reason: "Scored using rule-based logic.", ai: false });
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json({ error: 'Failed to classify threat' }, { status: 500 });
+    const message = data.choices?.[0]?.message?.content;
+    const match = message && message.match(/"score"\s*:\s*(\d+)/i);
+    const score = match ? parseInt(match[1], 10) : null;
+
+    if (!score) {
+      return res.status(500).json({ error: 'Failed to extract score' });
+    }
+
+    res.status(200).json({ score });
+  } catch (error) {
+    console.error('Score API error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 }
