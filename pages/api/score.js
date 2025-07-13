@@ -24,7 +24,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'system',
-            content: 'You are an AI threat analyst. ONLY return a JSON string with a single "score" field from 1 to 10 based on the user input. No other text.',
+            content: 'You are an AI threat analyst. Only respond with a JSON object: {"score": 1–10}, where 1 = low threat and 10 = high threat. No other commentary.',
           },
           {
             role: 'user',
@@ -35,22 +35,31 @@ export default async function handler(req, res) {
     });
 
     const data = await response.json();
+    const message = data.choices?.[0]?.message?.content?.trim();
 
-    if (!response.ok) {
-      return res.status(response.status).json({ error: data.error?.message || 'OpenAI API error' });
+    console.log('OpenAI raw response:', message);
+
+    // Try to parse JSON directly
+    try {
+      const parsed = JSON.parse(message);
+      if (typeof parsed.score === 'number') {
+        return res.status(200).json({ score: parsed.score });
+      }
+    } catch (jsonErr) {
+      // Fallback to regex match
+      const match = message && message.match(/"score"\s*:\s*(\d+)/i);
+      const score = match ? parseInt(match[1], 10) : null;
+
+      if (score) {
+        return res.status(200).json({ score });
+      }
+
+      return res.status(500).json({ error: 'Failed to extract score from response', raw: message });
     }
 
-    const message = data.choices?.[0]?.message?.content;
-    const match = message && message.match(/"score"\s*:\s*(\d+)/i);
-    const score = match ? parseInt(match[1], 10) : null;
-
-    if (!score) {
-      return res.status(500).json({ error: 'Failed to extract score' });
-    }
-
-    res.status(200).json({ score });
+    return res.status(500).json({ error: 'Invalid response format from OpenAI', raw: message });
   } catch (error) {
     console.error('Score API error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error', debug: error.message });
   }
 }
