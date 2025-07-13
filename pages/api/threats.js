@@ -1,39 +1,32 @@
-import fs from 'fs';
-import path from 'path';
 import Parser from 'rss-parser';
 
-const feedsFile = path.resolve('./pages/api/data/feeds.json');
 const parser = new Parser();
 
 export default async function handler(req, res) {
-  let feeds = [];
+  const feeds = [
+    'https://feeds.bbci.co.uk/news/world/rss.xml',
+    'https://rss.cnn.com/rss/edition_world.rss',
+    'https://www.reutersagency.com/feed/?best-topics=politics',
+  ];
 
-  if (fs.existsSync(feedsFile)) {
-    feeds = JSON.parse(fs.readFileSync(feedsFile));
-  }
-
-  if (!feeds.length) {
-    return res.status(400).json({ error: 'No feeds available' });
-  }
-
+  // OpenAI threat scoring function
   const scoreThreat = async (text) => {
     try {
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "gpt-4",
+          model: 'gpt-4',
           messages: [
             {
-              role: "system",
-              content:
-                "You are a cybersecurity analyst. Score the following article from 0 (no threat) to 10 (critical threat). Only return a number.",
+              role: 'system',
+              content: 'You are a threat analyst. Return a number only between 1 and 10 indicating the threat level.',
             },
             {
-              role: "user",
+              role: 'user',
               content: text,
             },
           ],
@@ -41,44 +34,38 @@ export default async function handler(req, res) {
       });
 
       const data = await response.json();
-      const raw = data.choices?.[0]?.message?.content || "0";
-      return parseInt(raw.match(/\d+/)?.[0]) || 0;
+      const content = data.choices?.[0]?.message?.content?.trim();
+      const score = parseInt(content.match(/\d+/)?.[0], 10);
+      return isNaN(score) ? null : score;
     } catch (err) {
-      console.error("OpenAI scoring error:", err);
-      return 0;
+      console.error('Threat scoring failed:', err);
+      return null;
     }
   };
 
-  const allArticles = [];
+  try {
+    const results = await Promise.all(
+      feeds.map(async (url) => {
+        const feed = await parser.parseURL(url);
+        const items = await Promise.all(
+          feed.items.slice(0, 5).map(async (item) => {
+            const score = await scoreThreat(item.title + ' ' + (item.contentSnippet || ''));
+            return {
+              title: item.title,
+              link: item.link,
+              pubDate: item.pubDate,
+              score,
+            };
+          })
+        );
+        return items;
+      })
+    );
 
-  for (const feed of feeds) {
-    try {
-      const parsed = await parser.parseURL(feed.url);
-      const items = parsed.items.map((item) => ({
-        title: item.title,
-        link: item.link,
-        summary: item.contentSnippet || item.content || '',
-        pubDate: item.pubDate,
-      }));
-      allArticles.push(...items);
-    } catch (err) {
-      console.error(`Failed to parse feed: ${feed.url}`, err.message);
-    }
+    const flat = results.flat();
+    res.status(200).json({ items: flat });
+  } catch (err) {
+    console.error('RSS processing error:', err);
+    res.status(500).json({ error: 'RSS feed or scoring failure', debug: err.message });
   }
-
-  allArticles.push({
-    title: "Radiation leak at nuclear plant detected",
-    summary: "Authorities warn of catastrophic threat to nearby cities due to system failure at reactor.",
-    link: "https://example.com/test-threat",
-    pubDate: new Date().toISOString(),
-  });
-
-  const threats = await Promise.all(
-    allArticles.map(async (item) => {
-      const score = await scoreThreat(`${item.title}. ${item.summary}`);
-      return { ...item, score };
-    })
-  );
-
-  res.status(200).json({ threats });
 }
