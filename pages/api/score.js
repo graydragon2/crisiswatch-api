@@ -24,7 +24,7 @@ export default async function handler(req, res) {
         messages: [
           {
             role: 'system',
-            content: 'You are an AI threat analyst. Return only a JSON string with a single key: "score", whose value is a number between 1 and 10. Example: { "score": 5 }',
+            content: 'You are an AI threat analyst. Return only this exact JSON: { "score": number } — the score must be between 1 and 10.',
           },
           {
             role: 'user',
@@ -36,14 +36,14 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    // ✅ Log full response
-    console.log('🔥 OpenAI response:', JSON.stringify(data, null, 2));
+    // ✅ Log the actual OpenAI response
+    console.log('OpenAI response:', JSON.stringify(data, null, 2));
 
-    const message = data.choices?.[0]?.message?.content;
-    const match = message && message.match(/"score"\s*:\s*(\d+)/i);
+    const message = data.choices?.[0]?.message?.content || '';
+    const match = message.match(/"score"\s*:\s*(\d+)/i);
     const score = match ? parseInt(match[1], 10) : null;
 
-    if (!score) {
+    if (!score || isNaN(score)) {
       return res.status(500).json({ error: 'Invalid score returned from AI', raw: message });
     }
 
