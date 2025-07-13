@@ -1,16 +1,13 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-const express = require('express');
-const fetch = require('node-fetch');
-const cors = require('cors');
-const dotenv = require('dotenv');
-const Parser = require('rss-parser');
 import express from 'express';
 import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import Parser from 'rss-parser';
 
 dotenv.config();
+
 const app = express();
 const port = process.env.PORT || 3001;
 const parser = new Parser();
@@ -46,9 +43,6 @@ app.get('/api/feeds', async (req, res) => {
 });
 
 // ✅ Dark Web Email Check
-
-app.use(cors());
-
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
   const apiKey = process.env.LEAKCHECK_API_KEY;
