@@ -3,11 +3,18 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Parser from 'rss-parser';
+import https from 'https'; // ✅ Add this
 
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
-const parser = new Parser();
+
+// ✅ Custom parser with TLS bypass
+const parser = new Parser({
+  requestOptions: {
+    agent: new https.Agent({ rejectUnauthorized: false })
+  }
+});
 
 app.use(cors());
 
