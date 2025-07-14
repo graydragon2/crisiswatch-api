@@ -1,4 +1,6 @@
 // server.js
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';  // ← disable cert checks globally
+
 import express from 'express';
 import fetch from 'node-fetch';
 import https from 'https';
@@ -7,26 +9,35 @@ import dotenv from 'dotenv';
 import Parser from 'rss-parser';
 
 dotenv.config();
+
 const app = express();
 const port = process.env.PORT || 3001;
-
-// JSON bodies if you ever POST/DELETE
-app.use(express.json());
 app.use(cors());
+app.use(express.json());
 
-// plain rss-parser instance (no built-in HTTP)
 const parser = new Parser();
 
-// an https.Agent that ignores invalid certs
+// HTTPS agent that ignores invalid certs
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-// healthcheck
-app.get('/', (req, res) => {
+// Helper to pick our agent for HTTPS URLs
+const agentCallback = (parsedURL) => {
+  if (parsedURL.protocol === 'https:') return httpsAgent;
+  // for http URLs you could return a http.Agent, or just leave undefined
+};
+
+/**
+ * Healthcheck
+ */
+app.get('/', (_req, res) => {
   res.send('CrisisWatch API is live');
 });
 
-// fetch & parse multiple feeds
-app.get('/api/feeds', async (req, res) => {
+/**
+ * GET /api/feeds
+ * Fetch & parse multiple RSS feeds, ignoring TLS errors
+ */
+app.get('/api/feeds', async (_req, res) => {
   const urls = [
     'https://feeds.bbci.co.uk/news/world/rss.xml',
     'https://rss.cnn.com/rss/edition_world.rss',
@@ -34,13 +45,13 @@ app.get('/api/feeds', async (req, res) => {
   ];
 
   try {
-    const results = await Promise.all(
+    const feeds = await Promise.all(
       urls.map(async (url) => {
-        // 1️⃣ manually fetch the XML with our custom agent
-        const response = await fetch(url, { agent: httpsAgent });
+        // fetch the raw XML using our custom agent
+        const response = await fetch(url, { agent: agentCallback });
         const xml = await response.text();
 
-        // 2️⃣ parse the XML string
+        // parse it with rss-parser
         const feed = await parser.parseString(xml);
         return {
           url,
@@ -49,7 +60,8 @@ app.get('/api/feeds', async (req, res) => {
         };
       })
     );
-    res.json({ feeds: results });
+
+    res.json({ feeds });
   } catch (err) {
     console.error('RSS feed parse error:', err.message);
     res
@@ -58,7 +70,10 @@ app.get('/api/feeds', async (req, res) => {
   }
 });
 
-// dark-web endpoint (unchanged)
+/**
+ * GET /api/darkweb?email=...
+ * Dark-web email breach check (unchanged)
+ */
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
   const apiKey = process.env.LEAKCHECK_API_KEY;
@@ -82,7 +97,9 @@ app.get('/api/darkweb', async (req, res) => {
   }
 });
 
-// kick off
+/**
+ * Start the server
+ */
 app.listen(port, () => {
   console.log(`CrisisWatch API listening on port ${port}`);
 });
