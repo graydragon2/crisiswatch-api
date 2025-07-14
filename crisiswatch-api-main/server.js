@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Parser from 'rss-parser';
-import https from 'https'; // ✅ Add this
+import https from 'https'; // ✅ For TLS bypass
 
 dotenv.config();
 const app = express();
@@ -18,7 +18,7 @@ const parser = new Parser({
 
 app.use(cors());
 
-// Test route
+// ✅ Root test route
 app.get('/', (req, res) => {
   res.send('CrisisWatch API is live');
 });
@@ -68,6 +68,46 @@ app.get('/api/darkweb', async (req, res) => {
   } catch (err) {
     console.error('Backend error:', err);
     res.status(500).json({ error: 'Internal server error', debug: err.message });
+  }
+});
+
+// ✅ Threat Feed Scoring with keyword filter
+app.post('/api/threats', express.json(), async (req, res) => {
+  const { sources = ['gdelt', 'bbc', 'cnn'], keywords = [] } = req.body;
+
+  const FEEDS = {
+    gdelt: 'https://blog.gdeltproject.org/feed/',
+    bbc: 'https://feeds.bbci.co.uk/news/world/rss.xml',
+    cnn: 'https://rss.cnn.com/rss/edition.rss'
+  };
+
+  const results = [];
+
+  try {
+    for (const src of sources) {
+      const FEED_URL = FEEDS[src];
+      if (!FEED_URL) continue;
+
+      const feed = await parser.parseURL(FEED_URL);
+
+      const filteredItems = feed.items.filter(item =>
+        keywords.length === 0 ||
+        keywords.some(kw =>
+          (item.title || '').toLowerCase().includes(kw.toLowerCase()) ||
+          (item.contentSnippet || '').toLowerCase().includes(kw.toLowerCase())
+        )
+      );
+
+      results.push(...filteredItems.map(item => ({
+        ...item,
+        source: src
+      })));
+    }
+
+    res.status(200).json({ threats: results });
+  } catch (err) {
+    console.error('Threat fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch threats', debug: err.message });
   }
 });
 
