@@ -1,43 +1,32 @@
 // server.js
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';  // ← disable cert checks globally
-
+import https from 'https';
 import express from 'express';
 import fetch from 'node-fetch';
-import https from 'https';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Parser from 'rss-parser';
 
 dotenv.config();
 
+// ---- create an RSS parser that ignores TLS errors ----
+const parser = new Parser({
+  requestOptions: {
+    agent: new https.Agent({ rejectUnauthorized: false })
+  }
+});
+
 const app = express();
 const port = process.env.PORT || 3001;
+
 app.use(cors());
-app.use(express.json());
 
-const parser = new Parser();
-
-// HTTPS agent that ignores invalid certs
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-
-// Helper to pick our agent for HTTPS URLs
-const agentCallback = (parsedURL) => {
-  if (parsedURL.protocol === 'https:') return httpsAgent;
-  // for http URLs you could return a http.Agent, or just leave undefined
-};
-
-/**
- * Healthcheck
- */
-app.get('/', (_req, res) => {
+// Test route
+app.get('/', (req, res) => {
   res.send('CrisisWatch API is live');
 });
 
-/**
- * GET /api/feeds
- * Fetch & parse multiple RSS feeds, ignoring TLS errors
- */
-app.get('/api/feeds', async (_req, res) => {
+// RSS Feeds route
+app.get('/api/feeds', async (req, res) => {
   const urls = [
     'https://feeds.bbci.co.uk/news/world/rss.xml',
     'https://rss.cnn.com/rss/edition_world.rss',
@@ -45,14 +34,9 @@ app.get('/api/feeds', async (_req, res) => {
   ];
 
   try {
-    const feeds = await Promise.all(
-      urls.map(async (url) => {
-        // fetch the raw XML using our custom agent
-        const response = await fetch(url, { agent: agentCallback });
-        const xml = await response.text();
-
-        // parse it with rss-parser
-        const feed = await parser.parseString(xml);
+    const results = await Promise.all(
+      urls.map(async url => {
+        const feed = await parser.parseURL(url);
         return {
           url,
           title: feed.title,
@@ -60,25 +44,22 @@ app.get('/api/feeds', async (_req, res) => {
         };
       })
     );
-
-    res.json({ feeds });
-  } catch (err) {
-    console.error('RSS feed parse error:', err.message);
+    res.json({ feeds: results });
+  } catch (error) {
+    console.error('RSS feed parse error:', error.message);
     res
       .status(500)
-      .json({ error: 'Failed to fetch or parse RSS feeds', debug: err.message });
+      .json({ error: 'Failed to fetch or parse RSS feeds', debug: error.message });
   }
 });
 
-/**
- * GET /api/darkweb?email=...
- * Dark-web email breach check (unchanged)
- */
+// Dark Web Email Check
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
   const apiKey = process.env.LEAKCHECK_API_KEY;
-  if (!email || !apiKey)
+  if (!email || !apiKey) {
     return res.status(400).json({ error: 'Missing email or API key' });
+  }
 
   try {
     const leakURL = `https://leakcheck.net/api/public?key=${apiKey}&check=${encodeURIComponent(
@@ -86,10 +67,9 @@ app.get('/api/darkweb', async (req, res) => {
     )}&type=email`;
     const response = await fetch(leakURL);
     const json = await response.json();
-
-    if (!response.ok || json.error)
+    if (!response.ok || json.error) {
       return res.status(502).json({ error: 'LeakCheck API error', details: json });
-
+    }
     res.json(json);
   } catch (err) {
     console.error('Backend error:', err);
@@ -97,9 +77,6 @@ app.get('/api/darkweb', async (req, res) => {
   }
 });
 
-/**
- * Start the server
- */
 app.listen(port, () => {
   console.log(`CrisisWatch API listening on port ${port}`);
 });
