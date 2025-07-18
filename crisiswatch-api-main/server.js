@@ -3,6 +3,7 @@ import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Parser from 'rss-parser';
+import rssRoute from './routes/rss.js';
 import https from 'https'; // ✅ For TLS bypass
 
 dotenv.config();
@@ -17,6 +18,8 @@ const parser = new Parser({
 });
 
 app.use(cors());
+app.use('/api/feeds', rssRoute);
+
 
 // ✅ Root test route
 app.get('/', (req, res) => {
