@@ -1,0 +1,13 @@
+# @anthropic-ai/sdk pulls in @streamparser/json, a transitive dependency
+# that explicitly supports Deno. Nixpacks' auto-detection has been known
+# to walk into that package inside node_modules and misidentify the whole
+# repo as a Deno project (this happened on a sibling project after adding
+# the same SDK). Pin the provider explicitly so build behavior doesn't
+# depend on that detection succeeding.
+providers = ["node"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[start]
+cmd = "node server.js"

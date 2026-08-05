@@ -5,96 +5,186 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import Parser from 'rss-parser';
 import https from 'https';
+import { getFeeds, addFeed, removeFeed } from './utils/feedStore.js';
+import { getKeywords, addKeyword, removeKeyword } from './utils/keywordStore.js';
+import { scoreText, scoreAndLocateTexts } from './utils/threatScorer.js';
+import { resolveCoordinates } from './utils/geoLookup.js';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-// global JSON body parser
 app.use(express.json());
 app.use(cors());
 
-// bypass bad certs for RSS parser
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-const parser = new Parser({ requestOptions: { agent: httpsAgent } });
+// Some source feeds present bad/self-signed certs; bypass for parsing only.
+const parser = new Parser({
+  requestOptions: { agent: new https.Agent({ rejectUnauthorized: false }) }
+});
 
 app.get('/', (req, res) => {
   res.send('CrisisWatch API is live');
 });
 
-// 1) RSS feeds
-app.get('/api/feeds', async (req, res) => {
-  const urls = [
-    'https://feeds.bbci.co.uk/news/world/rss.xml',
-    // you can drop CNN if it never works, or keep trying:
-    'https://rss.cnn.com/rss/edition_world.rss',
-    'https://www.reutersagency.com/feed/?best-topics=politics'
-  ];
+async function fetchFeedItems(feed, limit = 5) {
   try {
-    const results = await Promise.all(urls.map(async (u) => {
-      try {
-        const feed = await parser.parseURL(u);
-        return { url: u, title: feed.title, items: feed.items.slice(0,5) };
-      } catch(err) {
-        console.error(`↯ RSS parse error for ${u}:`, err.message);
-        return { url: u, title: null, items: [] };
-      }
-    }));
-    res.json({ feeds: results });
-  } catch(err) {
+    const parsed = await parser.parseURL(feed.url);
+    return {
+      url: feed.url,
+      title: feed.title || parsed.title || feed.url,
+      items: parsed.items.slice(0, limit).map((item) => ({
+        title: item.title,
+        link: item.link,
+        pubDate: item.pubDate || item.isoDate,
+        summary: item.contentSnippet || item.content || ''
+      }))
+    };
+  } catch (err) {
+    console.error(`RSS parse error for ${feed.url}:`, err.message);
+    return { url: feed.url, title: feed.title || feed.url, items: [] };
+  }
+}
+
+// ---- Feeds ----
+
+app.get('/api/feeds', async (req, res) => {
+  try {
+    const feeds = await Promise.all(getFeeds().map((f) => fetchFeedItems(f)));
+    res.json({ feeds });
+  } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch feeds', debug: err.message });
   }
 });
 
-// 2) Dark‑web check
+app.post('/api/feeds', (req, res) => {
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'Missing url' });
+  const feeds = addFeed(url);
+  res.json({ feeds });
+});
+
+app.delete('/api/feeds', (req, res) => {
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'Missing url' });
+  const feeds = removeFeed(url);
+  res.json({ feeds });
+});
+
+// ---- Keyword watchlist ("Keywords Alert") ----
+
+app.get('/api/keywords', (req, res) => {
+  res.json({ keywords: getKeywords() });
+});
+
+app.post('/api/keywords', (req, res) => {
+  const { keyword } = req.body || {};
+  if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
+  res.json({ keywords: addKeyword(keyword) });
+});
+
+app.delete('/api/keywords', (req, res) => {
+  const { keyword } = req.body || {};
+  if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
+  res.json({ keywords: removeKeyword(keyword) });
+});
+
+// ---- Threats (aggregated feed items, optional keyword/source filter, optional AI scoring) ----
+
+app.get('/api/threats', async (req, res) => {
+  try {
+    const keywords = (req.query.keywords || '')
+      .split(',')
+      .map((k) => k.trim().toLowerCase())
+      .filter(Boolean);
+    const sources = (req.query.sources || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const useAI = req.query.useAI !== 'false'; // default true
+
+    let feeds = getFeeds();
+    if (sources.length) {
+      feeds = feeds.filter((f) => sources.some((s) => (f.title || f.url).toLowerCase().includes(s)));
+    }
+
+    const parsedFeeds = await Promise.all(feeds.map((f) => fetchFeedItems(f, 20)));
+
+    let threats = parsedFeeds.flatMap((feed) =>
+      feed.items.map((item) => ({ ...item, source: feed.title }))
+    );
+
+    if (keywords.length) {
+      threats = threats.filter((item) =>
+        keywords.some((kw) =>
+          (item.title || '').toLowerCase().includes(kw) || (item.summary || '').toLowerCase().includes(kw)
+        )
+      );
+    }
+
+    if (useAI && threats.length) {
+      try {
+        const analyses = await scoreAndLocateTexts(threats.map((t) => `${t.title}. ${t.summary}`));
+        threats = threats.map((t, i) => ({
+          ...t,
+          score: analyses[i].score,
+          location: analyses[i].country,
+          coordinates: resolveCoordinates(analyses[i].country)
+        }));
+      } catch (err) {
+        // AI scoring is best-effort (e.g. ANTHROPIC_API_KEY not configured yet) —
+        // don't fail the whole feed just because scoring/geolocation is unavailable.
+        console.error('AI scoring/geolocation unavailable, returning unscored threats:', err.message);
+      }
+    }
+
+    res.json({ threats });
+  } catch (err) {
+    console.error('Threats aggregation error:', err);
+    res.status(500).json({ error: 'Failed to fetch threats', debug: err.message });
+  }
+});
+
+// ---- Dark web check (LeakCheck) ----
+
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
   const key = process.env.LEAKCHECK_API_KEY;
-  if (!email || !key) return res.status(400).json({ error:'Missing email or API key' });
+  if (!email || !key) return res.status(400).json({ error: 'Missing email or API key' });
   try {
-    const url = `https://leakcheck.net/api/public?key=${key}&check=${encodeURIComponent(email)}&type=email`;
+    const url = `https://leakcheck.io/api/public?key=${key}&check=${encodeURIComponent(email)}&type=email`;
     const r = await fetch(url);
     const j = await r.json();
-    if (!r.ok) return res.status(502).json({ error:'LeakCheck error', details:j });
-    res.json(j);
-  } catch(err) {
-    console.error(err);
-    res.status(500).json({ error:'Internal error', debug: err.message });
-  }
-});
-
-// 3) AI scoring
-app.post('/api/score', async (req, res) => {
-  const { text } = req.body;
-  const key = process.env.OPENAI_API_KEY;
-  if (!text || !key) return res.status(400).json({ error:'Missing text or API key' });
-  try {
-    const ai = await fetch('https://api.openai.com/v1/chat/completions', {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        Authorization:`Bearer ${key}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4',
-        messages: [
-          { role:'system', content:
-            'You are a cybersecurity analyst. Score the threat level of this message from 1 (low) to 10 (critical). Return only the number.' },
-          { role:'user', content: text }
-        ]
-      })
+    // LeakCheck's public API can return HTTP 200 with `success: false` and an
+    // explanatory `error` (e.g. a plan/type restriction) instead of a non-2xx
+    // status — treat that the same as a hard failure so it isn't silently
+    // reported back as "no results found".
+    if (!r.ok || j.success === false) {
+      return res.status(502).json({ error: j.error || 'LeakCheck error', details: j });
+    }
+    res.json({
+      found: Boolean(j.found),
+      entries: Array.isArray(j.result) ? j.result.map((entry) => entry.source?.name || JSON.stringify(entry)) : []
     });
-    const { choices } = await ai.json();
-    const raw = choices?.[0]?.message?.content.trim() || '';
-    const n = parseInt(raw,10);
-    if (isNaN(n)) throw new Error('Invalid number from AI → ' + raw);
-    res.json({ score: n });
-  } catch(err) {
-    console.error('AI scoring error:', err);
-    res.status(500).json({ error:'Failed to score threat', debug: err.message });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal error', debug: err.message });
   }
 });
 
-app.listen(port, ()=>console.log(`API live on ${port}`));
+// ---- AI scoring ----
+
+app.post('/api/score', async (req, res) => {
+  const { text } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'Missing text' });
+  try {
+    const score = await scoreText(text);
+    res.json({ score });
+  } catch (err) {
+    console.error('AI scoring error:', err);
+    res.status(500).json({ error: 'Failed to score threat', debug: err.message });
+  }
+});
+
+app.listen(port, () => console.log(`CrisisWatch API live on ${port}`));
