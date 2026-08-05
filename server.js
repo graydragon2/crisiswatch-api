@@ -6,7 +6,9 @@ import dotenv from 'dotenv';
 import Parser from 'rss-parser';
 import https from 'https';
 import { getFeeds, addFeed, removeFeed } from './utils/feedStore.js';
-import { scoreText, scoreTexts } from './utils/threatScorer.js';
+import { getKeywords, addKeyword, removeKeyword } from './utils/keywordStore.js';
+import { scoreText, scoreAndLocateTexts } from './utils/threatScorer.js';
+import { resolveCoordinates } from './utils/geoLookup.js';
 
 dotenv.config();
 
@@ -70,6 +72,24 @@ app.delete('/api/feeds', (req, res) => {
   res.json({ feeds });
 });
 
+// ---- Keyword watchlist ("Keywords Alert") ----
+
+app.get('/api/keywords', (req, res) => {
+  res.json({ keywords: getKeywords() });
+});
+
+app.post('/api/keywords', (req, res) => {
+  const { keyword } = req.body || {};
+  if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
+  res.json({ keywords: addKeyword(keyword) });
+});
+
+app.delete('/api/keywords', (req, res) => {
+  const { keyword } = req.body || {};
+  if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
+  res.json({ keywords: removeKeyword(keyword) });
+});
+
 // ---- Threats (aggregated feed items, optional keyword/source filter, optional AI scoring) ----
 
 app.get('/api/threats', async (req, res) => {
@@ -104,8 +124,13 @@ app.get('/api/threats', async (req, res) => {
     }
 
     if (useAI && threats.length) {
-      const scores = await scoreTexts(threats.map((t) => `${t.title}. ${t.summary}`));
-      threats = threats.map((t, i) => ({ ...t, score: scores[i] }));
+      const analyses = await scoreAndLocateTexts(threats.map((t) => `${t.title}. ${t.summary}`));
+      threats = threats.map((t, i) => ({
+        ...t,
+        score: analyses[i].score,
+        location: analyses[i].country,
+        coordinates: resolveCoordinates(analyses[i].country)
+      }));
     }
 
     res.json({ threats });
