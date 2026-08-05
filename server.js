@@ -124,13 +124,19 @@ app.get('/api/threats', async (req, res) => {
     }
 
     if (useAI && threats.length) {
-      const analyses = await scoreAndLocateTexts(threats.map((t) => `${t.title}. ${t.summary}`));
-      threats = threats.map((t, i) => ({
-        ...t,
-        score: analyses[i].score,
-        location: analyses[i].country,
-        coordinates: resolveCoordinates(analyses[i].country)
-      }));
+      try {
+        const analyses = await scoreAndLocateTexts(threats.map((t) => `${t.title}. ${t.summary}`));
+        threats = threats.map((t, i) => ({
+          ...t,
+          score: analyses[i].score,
+          location: analyses[i].country,
+          coordinates: resolveCoordinates(analyses[i].country)
+        }));
+      } catch (err) {
+        // AI scoring is best-effort (e.g. ANTHROPIC_API_KEY not configured yet) —
+        // don't fail the whole feed just because scoring/geolocation is unavailable.
+        console.error('AI scoring/geolocation unavailable, returning unscored threats:', err.message);
+      }
     }
 
     res.json({ threats });
@@ -147,10 +153,16 @@ app.get('/api/darkweb', async (req, res) => {
   const key = process.env.LEAKCHECK_API_KEY;
   if (!email || !key) return res.status(400).json({ error: 'Missing email or API key' });
   try {
-    const url = `https://leakcheck.net/api/public?key=${key}&check=${encodeURIComponent(email)}&type=email`;
+    const url = `https://leakcheck.io/api/public?key=${key}&check=${encodeURIComponent(email)}&type=email`;
     const r = await fetch(url);
     const j = await r.json();
-    if (!r.ok) return res.status(502).json({ error: 'LeakCheck error', details: j });
+    // LeakCheck's public API can return HTTP 200 with `success: false` and an
+    // explanatory `error` (e.g. a plan/type restriction) instead of a non-2xx
+    // status — treat that the same as a hard failure so it isn't silently
+    // reported back as "no results found".
+    if (!r.ok || j.success === false) {
+      return res.status(502).json({ error: j.error || 'LeakCheck error', details: j });
+    }
     res.json({
       found: Boolean(j.found),
       entries: Array.isArray(j.result) ? j.result.map((entry) => entry.source?.name || JSON.stringify(entry)) : []
