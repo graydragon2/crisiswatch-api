@@ -14,7 +14,9 @@ function getClient() {
   return client;
 }
 
-const MODEL = process.env.THREAT_SCORER_MODEL || 'claude-opus-5';
+// Haiku is plenty for a bounded 1-10 severity + country classification —
+// Opus was significant overkill in cost for what this task needs.
+const MODEL = process.env.THREAT_SCORER_MODEL || 'claude-haiku-4-5-20251001';
 const BATCH_SIZE = 20;
 
 const SYSTEM_PROMPT = `You are a crisis/threat severity analyst for CrisisWatch, a real-time news monitoring tool.
