@@ -59,7 +59,6 @@ async function scoreBatch(texts) {
     max_tokens: 2048,
     thinking: { type: 'disabled' },
     output_config: {
-      effort: 'low',
       format: { type: 'json_schema', schema: RESULT_SCHEMA }
     },
     system: SYSTEM_PROMPT,
@@ -142,7 +141,6 @@ async function scoreAndLocateBatch(texts) {
     max_tokens: 2048,
     thinking: { type: 'disabled' },
     output_config: {
-      effort: 'low',
       format: { type: 'json_schema', schema: LOCATE_RESULT_SCHEMA }
     },
     system: LOCATE_SYSTEM_PROMPT,
