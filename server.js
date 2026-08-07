@@ -163,9 +163,13 @@ app.get('/api/darkweb', async (req, res) => {
     if (!r.ok || j.success === false) {
       return res.status(502).json({ error: j.error || 'LeakCheck error', details: j });
     }
+    // LeakCheck's public API returns breach names under `sources`, not
+    // `result` (that's the v2/paid-lookup shape) — read either defensively
+    // since this was found live to return found:true with an empty list.
+    const rawEntries = Array.isArray(j.sources) ? j.sources : Array.isArray(j.result) ? j.result : [];
     res.json({
       found: Boolean(j.found),
-      entries: Array.isArray(j.result) ? j.result.map((entry) => entry.source?.name || JSON.stringify(entry)) : []
+      entries: rawEntries.map((entry) => (typeof entry === 'string' ? entry : entry?.name || entry?.source?.name || JSON.stringify(entry)))
     });
   } catch (err) {
     console.error(err);
