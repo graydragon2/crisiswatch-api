@@ -16,12 +16,8 @@
     "title": "NPR"
   },
   {
-    "url": "https://reliefweb.int/updates/rss.xml",
-    "title": "ReliefWeb"
-  },
-  {
-    "url": "https://www.gdacs.org/xml/rss.xml",
-    "title": "GDACS Disaster Alerts"
+    "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
+    "title": "UN News"
   },
   {
     "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.atom",
@@ -32,8 +28,8 @@
     "title": "NOAA Active Alerts"
   },
   {
-    "url": "https://www.understandingwar.org/rss.xml",
-    "title": "Institute for the Study of War"
+    "url": "https://foreignpolicy.com/feed/",
+    "title": "Foreign Policy"
   },
   {
     "url": "https://warontherocks.com/feed/",
