@@ -10,7 +10,9 @@ import Anthropic from '@anthropic-ai/sdk';
 
 let client;
 function getClient() {
-  if (!client) client = new Anthropic();
+  // A stalled call here previously had no bound at all, which could hang
+  // /api/threats (and anything waiting on it) indefinitely.
+  if (!client) client = new Anthropic({ timeout: 20000 });
   return client;
 }
 
@@ -97,11 +99,12 @@ export async function scoreText(text) {
 export async function scoreTexts(texts) {
   if (!texts.length) return [];
   const batches = chunk(texts, BATCH_SIZE);
-  const scores = [];
-  for (const batch of batches) {
-    scores.push(...(await scoreBatch(batch)));
-  }
-  return scores;
+  // Batches are independent — run them concurrently rather than one after
+  // another, so total time is bounded by the slowest single batch instead
+  // of the sum of all of them (this mattered a lot once feed count, and so
+  // item count, grew).
+  const results = await Promise.all(batches.map((batch) => scoreBatch(batch)));
+  return results.flat();
 }
 
 const LOCATE_SYSTEM_PROMPT = `You are a crisis/threat severity and geolocation analyst for CrisisWatch, a real-time news monitoring tool.
@@ -171,9 +174,7 @@ async function scoreAndLocateBatch(texts) {
 export async function scoreAndLocateTexts(texts) {
   if (!texts.length) return [];
   const batches = chunk(texts, BATCH_SIZE);
-  const results = [];
-  for (const batch of batches) {
-    results.push(...(await scoreAndLocateBatch(batch)));
-  }
-  return results;
+  // Same reasoning as scoreTexts() — independent batches, run concurrently.
+  const results = await Promise.all(batches.map((batch) => scoreAndLocateBatch(batch)));
+  return results.flat();
 }
