@@ -4,11 +4,7 @@
     "title": "BBC World News"
   },
   {
-    "url": "https://rss.cnn.com/rss/edition_world.rss",
+    "url": "http://rss.cnn.com/rss/edition_world.rss",
     "title": "CNN World"
-  },
-  {
-    "url": "https://www.reutersagency.com/feed/?best-topics=world",
-    "title": "Reuters World"
   }
 ]

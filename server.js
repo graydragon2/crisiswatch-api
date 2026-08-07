@@ -19,9 +19,20 @@ app.use(express.json());
 app.use(cors());
 
 // Some source feeds present bad/self-signed certs; bypass for parsing only.
-const parser = new Parser({
+// A real User-Agent matters too — some providers block/reset connections
+// from requests with no or generic User-Agent headers. Two parser instances
+// since an https.Agent can't be used against a plain http:// feed URL (some
+// legacy RSS subdomains, e.g. CNN's, don't support TLS at all).
+const parserHeaders = { 'User-Agent': 'CrisisWatchBot/1.0' };
+const httpsParser = new Parser({
+  headers: parserHeaders,
   requestOptions: { agent: new https.Agent({ rejectUnauthorized: false }) }
 });
+const httpParser = new Parser({ headers: parserHeaders });
+
+function parserFor(url) {
+  return url.startsWith('http://') ? httpParser : httpsParser;
+}
 
 app.get('/', (req, res) => {
   res.send('CrisisWatch API is live');
@@ -40,7 +51,7 @@ app.get('/api/status', (req, res) => {
 
 async function fetchFeedItems(feed, limit = 5) {
   try {
-    const parsed = await parser.parseURL(feed.url);
+    const parsed = await parserFor(feed.url).parseURL(feed.url);
     return {
       url: feed.url,
       title: feed.title || parsed.title || feed.url,
