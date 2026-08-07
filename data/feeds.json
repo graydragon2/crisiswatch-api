@@ -6,5 +6,41 @@
   {
     "url": "http://rss.cnn.com/rss/edition_world.rss",
     "title": "CNN World"
+  },
+  {
+    "url": "https://www.aljazeera.com/xml/rss/all.xml",
+    "title": "Al Jazeera"
+  },
+  {
+    "url": "https://feeds.npr.org/1001/rss.xml",
+    "title": "NPR"
+  },
+  {
+    "url": "https://reliefweb.int/updates/rss.xml",
+    "title": "ReliefWeb"
+  },
+  {
+    "url": "https://www.gdacs.org/xml/rss.xml",
+    "title": "GDACS Disaster Alerts"
+  },
+  {
+    "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.atom",
+    "title": "USGS Significant Earthquakes"
+  },
+  {
+    "url": "https://api.weather.gov/alerts/active.atom",
+    "title": "NOAA Active Alerts"
+  },
+  {
+    "url": "https://www.understandingwar.org/rss.xml",
+    "title": "Institute for the Study of War"
+  },
+  {
+    "url": "https://warontherocks.com/feed/",
+    "title": "War on the Rocks"
+  },
+  {
+    "url": "https://www.bellingcat.com/feed/",
+    "title": "Bellingcat"
   }
 ]
