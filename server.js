@@ -27,12 +27,24 @@ app.get('/', (req, res) => {
   res.send('CrisisWatch API is live');
 });
 
+// Config presence only — never the actual key values — so the Admin Panel
+// can show an at-a-glance health view without exposing secrets.
+app.get('/api/status', (req, res) => {
+  res.json({
+    anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    leakcheckConfigured: Boolean(process.env.LEAKCHECK_API_KEY),
+    feedCount: getFeeds().length,
+    keywordCount: getKeywords().length
+  });
+});
+
 async function fetchFeedItems(feed, limit = 5) {
   try {
     const parsed = await parser.parseURL(feed.url);
     return {
       url: feed.url,
       title: feed.title || parsed.title || feed.url,
+      ok: true,
       items: parsed.items.slice(0, limit).map((item) => ({
         title: item.title,
         link: item.link,
@@ -42,7 +54,7 @@ async function fetchFeedItems(feed, limit = 5) {
     };
   } catch (err) {
     console.error(`RSS parse error for ${feed.url}:`, err.message);
-    return { url: feed.url, title: feed.title || feed.url, items: [] };
+    return { url: feed.url, title: feed.title || feed.url, ok: false, error: err.message, items: [] };
   }
 }
 
