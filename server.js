@@ -23,15 +23,28 @@ app.use(cors());
 // from requests with no or generic User-Agent headers. Two parser instances
 // since an https.Agent can't be used against a plain http:// feed URL (some
 // legacy RSS subdomains, e.g. CNN's, don't support TLS at all).
+const FEED_TIMEOUT_MS = 10000;
 const parserHeaders = { 'User-Agent': 'CrisisWatchBot/1.0' };
 const httpsParser = new Parser({
   headers: parserHeaders,
+  timeout: FEED_TIMEOUT_MS,
   requestOptions: { agent: new https.Agent({ rejectUnauthorized: false }) }
 });
-const httpParser = new Parser({ headers: parserHeaders });
+const httpParser = new Parser({ headers: parserHeaders, timeout: FEED_TIMEOUT_MS });
 
 function parserFor(url) {
   return url.startsWith('http://') ? httpParser : httpsParser;
+}
+
+// Belt-and-braces on top of rss-parser's own `timeout` option — a feed that
+// hangs the connection rather than erroring outright would otherwise stall
+// the whole Promise.all() in /api/feeds and /api/threats indefinitely, since
+// neither has any other timeout.
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms))
+  ]);
 }
 
 app.get('/', (req, res) => {
@@ -51,7 +64,7 @@ app.get('/api/status', (req, res) => {
 
 async function fetchFeedItems(feed, limit = 5) {
   try {
-    const parsed = await parserFor(feed.url).parseURL(feed.url);
+    const parsed = await withTimeout(parserFor(feed.url).parseURL(feed.url), FEED_TIMEOUT_MS);
     return {
       url: feed.url,
       title: feed.title || parsed.title || feed.url,
