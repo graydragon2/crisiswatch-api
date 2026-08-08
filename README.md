@@ -1,6 +1,6 @@
 # CrisisWatch API
 
-Express (ESM) backend for CrisisWatch — aggregates RSS feeds tracking local and global crises, scores/geolocates them with Claude, checks emails against known credential leaks, and maintains a keyword watchlist. Paired with [crisiswatch-frontend](https://github.com/graydragon2/crisiswatch-frontend).
+Express (ESM) backend for CrisisWatch — aggregates RSS feeds tracking local and global crises, scores/geolocates them with Claude, checks emails against known credential leaks, maintains a keyword watchlist, and watches specific zip codes for local weather alerts and news. Paired with [crisiswatch-frontend](https://github.com/graydragon2/crisiswatch-frontend).
 
 ## Setup
 
@@ -25,6 +25,7 @@ Runs on `PORT` (defaults to `3001`).
 
 - `GET /api/feeds` / `POST /api/feeds` / `DELETE /api/feeds` — manage the tracked RSS feed list (persisted to `data/feeds.json`).
 - `GET /api/keywords` / `POST /api/keywords` / `DELETE /api/keywords` — manage the keyword watchlist (persisted to `data/keywords.json`), used to drive the frontend's "Keywords Alert" widget.
+- `GET /api/locations` / `POST /api/locations` / `DELETE /api/locations` — manage the watched zip codes (persisted to `data/locations.json`). `GET` geocodes each zip, pulls active NWS weather/emergency alerts for that point, and pulls a location-scoped local news feed, optionally scored via Claude (`useAI`, `true` by default). No API key needed for the geocoding or NWS lookups — only the optional news scoring uses `ANTHROPIC_API_KEY`.
 - `GET /api/threats` — aggregated feed items. Query params: `keywords` (comma-separated), `sources` (comma-separated, matches feed name), `useAI` (`true` by default — attaches `score`/`location`/`coordinates` per item via Claude; set `false` to skip and avoid API usage).
 - `GET /api/darkweb?email=...` — checks an email against known breaches via LeakCheck, normalized to `{found, entries}`.
 - `POST /api/score` — score a single arbitrary piece of text (`{ text }` body) 1–10 via Claude.
