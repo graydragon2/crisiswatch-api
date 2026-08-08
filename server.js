@@ -7,7 +7,9 @@ import Parser from 'rss-parser';
 import https from 'https';
 import { getFeeds, addFeed, removeFeed } from './utils/feedStore.js';
 import { getKeywords, addKeyword, removeKeyword } from './utils/keywordStore.js';
-import { scoreText, scoreAndLocateTexts } from './utils/threatScorer.js';
+import { getLocations, addLocation, removeLocation } from './utils/locationStore.js';
+import { watchLocation } from './utils/locationWatch.js';
+import { scoreText, scoreTexts, scoreAndLocateTexts } from './utils/threatScorer.js';
 import { resolveCoordinates } from './utils/geoLookup.js';
 
 dotenv.config();
@@ -124,6 +126,57 @@ app.delete('/api/keywords', (req, res) => {
   const { keyword } = req.body || {};
   if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
   res.json({ keywords: removeKeyword(keyword) });
+});
+
+// ---- Watched locations ("Watched Locations": weather alerts + local news per zip) ----
+
+app.post('/api/locations', (req, res) => {
+  const { zip } = req.body || {};
+  if (!zip) return res.status(400).json({ error: 'Missing zip' });
+  res.json({ locations: addLocation(zip) });
+});
+
+app.delete('/api/locations', (req, res) => {
+  const { zip } = req.body || {};
+  if (!zip) return res.status(400).json({ error: 'Missing zip' });
+  res.json({ locations: removeLocation(zip) });
+});
+
+app.get('/api/locations', async (req, res) => {
+  const useAI = req.query.useAI !== 'false'; // default true
+  try {
+    const zips = getLocations();
+    const results = await Promise.all(
+      zips.map((zip) =>
+        watchLocation(zip).catch((err) => {
+          console.error(`Location watch failed for ${zip}:`, err.message);
+          return { zip, city: null, state: null, alerts: [], news: [], error: err.message };
+        })
+      )
+    );
+
+    if (useAI) {
+      const newsTexts = results.flatMap((r) => (r.news || []).map((n) => n.title));
+      if (newsTexts.length) {
+        try {
+          const scores = await scoreTexts(newsTexts);
+          let i = 0;
+          for (const r of results) {
+            for (const n of r.news || []) n.score = scores[i++];
+          }
+        } catch (err) {
+          // Same graceful-degradation pattern as /api/threats — a scoring
+          // failure shouldn't take down the whole locations response.
+          console.error('Location news scoring unavailable:', err.message);
+        }
+      }
+    }
+
+    res.json({ locations: results });
+  } catch (err) {
+    console.error('Locations aggregation error:', err);
+    res.status(500).json({ error: 'Failed to fetch watched locations', debug: err.message });
+  }
 });
 
 // ---- Threats (aggregated feed items, optional keyword/source filter, optional AI scoring) ----
