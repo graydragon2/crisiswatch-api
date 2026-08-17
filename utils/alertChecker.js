@@ -1,13 +1,11 @@
 // utils/alertChecker.js
 //
-// Periodically checks for high-severity threats and severe weather alerts
-// on watched locations, and emails the configured recipient when something
-// new (not already alerted) shows up. Reuses the existing /api/threats and
-// /api/locations aggregation via a self-fetch to localhost rather than
-// duplicating their fetch/scoring logic here — same server process, so this
-// is a cheap loopback call, not a real network hop.
+// Checks a snapshot of threats/watched-location data (gathered once per
+// tick by dataCollector.js and shared with historyStore's snapshotter — see
+// server.js) for high-severity items and severe weather alerts, and emails
+// the configured recipient when something new (not already alerted) shows
+// up.
 
-import fetch from 'node-fetch';
 import { getAlertSettings, filterUnseen, markSeen } from './alertStore.js';
 import { isMailerConfigured, sendMail } from './mailer.js';
 
@@ -42,26 +40,22 @@ function renderEmail({ threats, weatherAlerts, localNews }) {
   `;
 }
 
-export async function runAlertCheck(port) {
+/**
+ * @param {{threats: object[], locations: object[]}} data from dataCollector.collectSnapshotData
+ */
+export async function runAlertCheck({ threats: allThreats, locations: allLocations }) {
   const { enabled, recipient } = getAlertSettings();
   if (!enabled || !recipient || !isMailerConfigured()) return;
 
-  const base = `http://localhost:${port}`;
-
   try {
-    const [threatsRes, locationsRes] = await Promise.all([
-      fetch(`${base}/api/threats?useAI=true`).then((r) => r.json()).catch(() => ({ threats: [] })),
-      fetch(`${base}/api/locations?useAI=true`).then((r) => r.json()).catch(() => ({ locations: [] }))
-    ]);
-
-    const candidateThreats = (threatsRes.threats || []).filter((t) => typeof t.score === 'number' && t.score >= SCORE_THRESHOLD);
+    const candidateThreats = allThreats.filter((t) => typeof t.score === 'number' && t.score >= SCORE_THRESHOLD);
     const threatKeys = candidateThreats.map((t) => t.link).filter(Boolean);
     const newThreatKeys = new Set(filterUnseen(threatKeys));
     const threats = candidateThreats.filter((t) => newThreatKeys.has(t.link));
 
     const weatherAlertCandidates = [];
     const newsCandidates = [];
-    for (const loc of locationsRes.locations || []) {
+    for (const loc of allLocations) {
       for (const a of loc.alerts || []) {
         if (NWS_ALERT_SEVERITIES.has(a.severity) && a.link) {
           weatherAlertCandidates.push({ ...a, city: loc.city, state: loc.state, key: a.link });

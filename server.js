@@ -14,6 +14,8 @@ import { resolveCoordinates } from './utils/geoLookup.js';
 import { getAlertSettings, updateAlertSettings } from './utils/alertStore.js';
 import { isMailerConfigured, sendMail } from './utils/mailer.js';
 import { runAlertCheck } from './utils/alertChecker.js';
+import { collectSnapshotData } from './utils/dataCollector.js';
+import { recordSnapshot, getThreatScoreSummary, getHistoryRange } from './utils/historyStore.js';
 
 dotenv.config();
 
@@ -246,7 +248,8 @@ app.get('/api/threats', async (req, res) => {
           ...t,
           score: analyses[i].score,
           location: analyses[i].country,
-          coordinates: resolveCoordinates(analyses[i].country)
+          coordinates: resolveCoordinates(analyses[i].country),
+          category: analyses[i].category
         }));
       } catch (err) {
         // AI scoring is best-effort (e.g. ANTHROPIC_API_KEY not configured yet) —
@@ -293,6 +296,35 @@ app.get('/api/darkweb', async (req, res) => {
   }
 });
 
+// ---- Threat Score (composite score + category breakdown, from history) ----
+
+app.get('/api/threat-score', (req, res) => {
+  const summary = getThreatScoreSummary();
+  if (!summary) {
+    return res.status(503).json({ error: 'No history recorded yet — check back after the first monitoring cycle completes' });
+  }
+  res.json(summary);
+});
+
+app.get('/api/threat-score/history', (req, res) => {
+  const range = ['24h', '7d', '30d', '90d'].includes(req.query.range) ? req.query.range : '7d';
+  res.json(getHistoryRange(range));
+});
+
+// ---- Dashboard stats ----
+
+app.get('/api/stats', (req, res) => {
+  const summary = getThreatScoreSummary();
+  if (!summary) {
+    return res.json({ criticalAlerts: { count: 0, newToday: 0 }, breakingNews: { count24h: 0 } });
+  }
+  res.json({
+    criticalAlerts: { count: summary.criticalCount, newToday: summary.newCriticalToday },
+    breakingNews: { count24h: summary.breakingCount24h },
+    lastUpdated: summary.lastUpdated
+  });
+});
+
 // ---- AI scoring ----
 
 app.post('/api/score', async (req, res) => {
@@ -307,15 +339,26 @@ app.post('/api/score', async (req, res) => {
   }
 });
 
-const ALERT_CHECK_INTERVAL_MS = (Number(process.env.ALERT_CHECK_INTERVAL_MINUTES) || 15) * 60 * 1000;
+const MONITOR_INTERVAL_MS = (Number(process.env.MONITOR_INTERVAL_MINUTES) || 15) * 60 * 1000;
+
+// One shared data collection per tick, feeding both the history snapshot
+// and the alert check — previously each self-fetched independently, which
+// meant two full AI-scoring passes per tick for the same underlying data.
+async function runMonitorTick() {
+  try {
+    const data = await collectSnapshotData(port);
+    recordSnapshot([...data.threats, ...data.locations.flatMap((l) => l.news || [])]);
+    await runAlertCheck(data);
+  } catch (err) {
+    console.error('Monitor tick failed:', err.message);
+  }
+}
 
 app.listen(port, () => {
   console.log(`CrisisWatch API live on ${port}`);
-  // Give the server a moment to fully warm up before the first self-check,
-  // then run on a fixed interval. runAlertCheck no-ops immediately if
-  // alerting isn't enabled/configured, so this is cheap when unused.
+  // Give the server a moment to fully warm up before the first tick.
   setTimeout(() => {
-    runAlertCheck(port);
-    setInterval(() => runAlertCheck(port), ALERT_CHECK_INTERVAL_MS);
+    runMonitorTick();
+    setInterval(runMonitorTick, MONITOR_INTERVAL_MS);
   }, 30000);
 });
