@@ -107,11 +107,22 @@ export async function scoreTexts(texts) {
   return results.flat();
 }
 
+export const THREAT_CATEGORIES = [
+  'Cybersecurity',
+  'Geopolitical',
+  'Conflict',
+  'Public Safety',
+  'Infrastructure',
+  'Natural Disaster',
+  'Other'
+];
+
 const LOCATE_SYSTEM_PROMPT = `You are a crisis/threat severity and geolocation analyst for CrisisWatch, a real-time news monitoring tool.
 
 For each numbered item, provide:
 - score: severity from 1 (no real threat, routine news) to 10 (imminent, catastrophic, large-scale threat). Consider scale, immediacy, and verification status, not just alarming words.
 - country: the single country most associated with the event (the country name, e.g. "Ukraine", "United States"). If the item has no clear geographic tie (e.g. a general cybersecurity advisory, or genuinely global/unclear), use null.
+- category: exactly one of ${THREAT_CATEGORIES.join(', ')} — whichever best describes the event. Use "Other" only when none of the rest genuinely fit.
 
 Respond only via the provided schema, one result per input item, preserving the input index.`;
 
@@ -125,9 +136,10 @@ const LOCATE_RESULT_SCHEMA = {
         properties: {
           index: { type: 'integer', description: 'Matches the input item number' },
           score: { type: 'integer', description: '1-10 severity' },
-          country: { type: ['string', 'null'], description: 'Country name, or null if unclear' }
+          country: { type: ['string', 'null'], description: 'Country name, or null if unclear' },
+          category: { type: 'string', enum: THREAT_CATEGORIES }
         },
-        required: ['index', 'score', 'country'],
+        required: ['index', 'score', 'country', 'category'],
         additionalProperties: false
       }
     }
@@ -157,19 +169,21 @@ async function scoreAndLocateBatch(texts) {
   const textBlock = response.content.find((b) => b.type === 'text');
   const parsed = JSON.parse(textBlock.text);
 
-  const results = new Array(texts.length).fill(null).map(() => ({ score: 1, country: null }));
+  const results = new Array(texts.length).fill(null).map(() => ({ score: 1, country: null, category: 'Other' }));
   for (const r of parsed.results) {
-    if (r.index >= 0 && r.index < results.length) results[r.index] = { score: r.score, country: r.country };
+    if (r.index >= 0 && r.index < results.length) {
+      results[r.index] = { score: r.score, country: r.country, category: r.category };
+    }
   }
   return results;
 }
 
 /**
- * Scores many texts and extracts a best-guess country per item, in batches
- * of 20 per API call (same cost as scoreTexts — location comes along for
- * free in the same structured-output call).
+ * Scores many texts and extracts a best-guess country + category per item,
+ * in batches of 20 per API call (same cost as scoreTexts — location and
+ * category come along for free in the same structured-output call).
  * @param {string[]} texts
- * @returns {Promise<{score: number, country: string|null}[]>}
+ * @returns {Promise<{score: number, country: string|null, category: string}[]>}
  */
 export async function scoreAndLocateTexts(texts) {
   if (!texts.length) return [];
