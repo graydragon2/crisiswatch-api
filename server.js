@@ -13,7 +13,9 @@ import { scoreText, scoreTexts, scoreAndLocateTexts } from './utils/threatScorer
 import { resolveCoordinates } from './utils/geoLookup.js';
 import { getAlertSettings, updateAlertSettings } from './utils/alertStore.js';
 import { isMailerConfigured, sendMail } from './utils/mailer.js';
-import { runAlertCheck } from './utils/alertChecker.js';
+import { sendAlertEmail } from './utils/alertChecker.js';
+import { detectNewAlertableItems, buildNotificationItems } from './utils/alertDetector.js';
+import { getNotifications, getUnreadCount, addNotifications, markRead, markAllRead, clearNotification } from './utils/notificationStore.js';
 import { collectSnapshotData } from './utils/dataCollector.js';
 import { recordSnapshot, getThreatScoreSummary, getHistoryRange } from './utils/historyStore.js';
 import { checkEmailExposure } from './utils/darkWebCheck.js';
@@ -310,6 +312,24 @@ app.delete('/api/darkweb/monitored', (req, res) => {
   res.json({ emails: removeMonitoredEmail(email) });
 });
 
+// ---- In-app notifications (populated by runMonitorTick's detection pass) ----
+
+app.get('/api/notifications', (req, res) => {
+  res.json({ notifications: getNotifications(), unreadCount: getUnreadCount() });
+});
+
+app.post('/api/notifications/:id/read', (req, res) => {
+  res.json({ notifications: markRead(req.params.id) });
+});
+
+app.post('/api/notifications/read-all', (req, res) => {
+  res.json({ notifications: markAllRead() });
+});
+
+app.delete('/api/notifications/:id', (req, res) => {
+  res.json({ notifications: clearNotification(req.params.id) });
+});
+
 // ---- Threat Score (composite score + category breakdown, from history) ----
 
 app.get('/api/threat-score', (req, res) => {
@@ -362,23 +382,47 @@ app.post('/api/score', async (req, res) => {
 
 const MONITOR_INTERVAL_MS = (Number(process.env.MONITOR_INTERVAL_MINUTES) || 15) * 60 * 1000;
 
-// One shared data collection per tick, feeding both the history snapshot
-// and the alert check — previously each self-fetched independently, which
-// meant two full AI-scoring passes per tick for the same underlying data.
+// One shared data collection per tick, feeding the history snapshot, the
+// in-app notification center, and email alerts — previously each self-
+// fetched independently, which meant multiple full AI-scoring passes per
+// tick for the same underlying data.
+//
+// Order matters: dark web addresses are refreshed *before* detection runs,
+// so a freshly-rechecked exposure count is included in that tick's
+// detection pass rather than lagging a full cycle behind. Detection itself
+// runs unconditionally (regardless of whether email alerting is enabled)
+// so the notification center stays populated even for users who haven't
+// set up email — sendAlertEmail() below is a no-op when alerts aren't
+// configured.
 async function runMonitorTick() {
+  let data;
   try {
-    const data = await collectSnapshotData(port);
+    data = await collectSnapshotData(port);
     recordSnapshot([...data.threats, ...data.locations.flatMap((l) => l.news || [])]);
-    await runAlertCheck(data);
   } catch (err) {
     console.error('Monitor tick failed:', err.message);
   }
+
   try {
     // Internally a no-op for any email checked more recently than
     // DARKWEB_RECHECK_HOURS, so this is cheap on most ticks.
     await refreshStaleMonitoredEmails();
   } catch (err) {
     console.error('Dark web monitor refresh failed:', err.message);
+  }
+
+  if (!data) return;
+  try {
+    const detected = detectNewAlertableItems({
+      threats: data.threats,
+      locations: data.locations,
+      monitoredEmails: getMonitoredEmails()
+    });
+    const notificationItems = buildNotificationItems(detected);
+    if (notificationItems.length) addNotifications(notificationItems);
+    await sendAlertEmail(detected);
+  } catch (err) {
+    console.error('Alert detection failed:', err.message);
   }
 }
 
