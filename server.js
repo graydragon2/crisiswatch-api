@@ -16,6 +16,9 @@ import { isMailerConfigured, sendMail } from './utils/mailer.js';
 import { runAlertCheck } from './utils/alertChecker.js';
 import { collectSnapshotData } from './utils/dataCollector.js';
 import { recordSnapshot, getThreatScoreSummary, getHistoryRange } from './utils/historyStore.js';
+import { checkEmailExposure } from './utils/darkWebCheck.js';
+import { getMonitoredEmails, addMonitoredEmail, removeMonitoredEmail, updateCheckResult } from './utils/monitoredEmailStore.js';
+import { refreshStaleMonitoredEmails } from './utils/darkWebMonitor.js';
 
 dotenv.config();
 
@@ -269,31 +272,42 @@ app.get('/api/threats', async (req, res) => {
 
 app.get('/api/darkweb', async (req, res) => {
   const email = req.query.email;
-  const key = process.env.LEAKCHECK_API_KEY;
-  if (!email || !key) return res.status(400).json({ error: 'Missing email or API key' });
+  if (!email) return res.status(400).json({ error: 'Missing email' });
   try {
-    const url = `https://leakcheck.io/api/public?key=${key}&check=${encodeURIComponent(email)}&type=email`;
-    const r = await fetch(url);
-    const j = await r.json();
-    // LeakCheck's public API can return HTTP 200 with `success: false` and an
-    // explanatory `error` (e.g. a plan/type restriction) instead of a non-2xx
-    // status — treat that the same as a hard failure so it isn't silently
-    // reported back as "no results found".
-    if (!r.ok || j.success === false) {
-      return res.status(502).json({ error: j.error || 'LeakCheck error', details: j });
-    }
-    // LeakCheck's public API returns breach names under `sources`, not
-    // `result` (that's the v2/paid-lookup shape) — read either defensively
-    // since this was found live to return found:true with an empty list.
-    const rawEntries = Array.isArray(j.sources) ? j.sources : Array.isArray(j.result) ? j.result : [];
-    res.json({
-      found: Boolean(j.found),
-      entries: rawEntries.map((entry) => (typeof entry === 'string' ? entry : entry?.name || entry?.source?.name || JSON.stringify(entry)))
-    });
+    res.json(await checkEmailExposure(email));
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal error', debug: err.message });
+    console.error('Dark web check failed:', err.message);
+    res.status(502).json({ error: err.message });
   }
+});
+
+// ---- Persistent dark web monitoring ("Monitored Addresses") ----
+
+app.get('/api/darkweb/monitored', (req, res) => {
+  res.json({ emails: getMonitoredEmails() });
+});
+
+app.post('/api/darkweb/monitored', async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Missing or invalid email' });
+
+  addMonitoredEmail(email);
+  // Run an immediate check rather than waiting for the next monitor tick,
+  // so adding an email shows a real result right away.
+  const normalized = email.trim().toLowerCase();
+  try {
+    const result = await checkEmailExposure(normalized);
+    res.json({ emails: updateCheckResult(normalized, result) });
+  } catch (err) {
+    console.error('Initial dark web check failed:', err.message);
+    res.json({ emails: updateCheckResult(normalized, { error: err.message }) });
+  }
+});
+
+app.delete('/api/darkweb/monitored', (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Missing email' });
+  res.json({ emails: removeMonitoredEmail(email) });
 });
 
 // ---- Threat Score (composite score + category breakdown, from history) ----
@@ -315,12 +329,19 @@ app.get('/api/threat-score/history', (req, res) => {
 
 app.get('/api/stats', (req, res) => {
   const summary = getThreatScoreSummary();
+  const monitoredEmails = getMonitoredEmails();
+  const darkWebHits = {
+    count: monitoredEmails.reduce((sum, e) => sum + (e.exposureCount || 0), 0),
+    monitored: monitoredEmails.length
+  };
+
   if (!summary) {
-    return res.json({ criticalAlerts: { count: 0, newToday: 0 }, breakingNews: { count24h: 0 } });
+    return res.json({ criticalAlerts: { count: 0, newToday: 0 }, breakingNews: { count24h: 0 }, darkWebHits });
   }
   res.json({
     criticalAlerts: { count: summary.criticalCount, newToday: summary.newCriticalToday },
     breakingNews: { count24h: summary.breakingCount24h },
+    darkWebHits,
     lastUpdated: summary.lastUpdated
   });
 });
@@ -351,6 +372,13 @@ async function runMonitorTick() {
     await runAlertCheck(data);
   } catch (err) {
     console.error('Monitor tick failed:', err.message);
+  }
+  try {
+    // Internally a no-op for any email checked more recently than
+    // DARKWEB_RECHECK_HOURS, so this is cheap on most ticks.
+    await refreshStaleMonitoredEmails();
+  } catch (err) {
+    console.error('Dark web monitor refresh failed:', err.message);
   }
 }
 
