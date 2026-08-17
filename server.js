@@ -11,6 +11,9 @@ import { getLocations, addLocation, removeLocation } from './utils/locationStore
 import { watchLocation } from './utils/locationWatch.js';
 import { scoreText, scoreTexts, scoreAndLocateTexts } from './utils/threatScorer.js';
 import { resolveCoordinates } from './utils/geoLookup.js';
+import { getAlertSettings, updateAlertSettings } from './utils/alertStore.js';
+import { isMailerConfigured, sendMail } from './utils/mailer.js';
+import { runAlertCheck } from './utils/alertChecker.js';
 
 dotenv.config();
 
@@ -59,9 +62,33 @@ app.get('/api/status', (req, res) => {
   res.json({
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
     leakcheckConfigured: Boolean(process.env.LEAKCHECK_API_KEY),
+    mailerConfigured: isMailerConfigured(),
     feedCount: getFeeds().length,
     keywordCount: getKeywords().length
   });
+});
+
+// ---- Email alerts ----
+
+app.get('/api/alerts/settings', (req, res) => {
+  res.json({ ...getAlertSettings(), mailerConfigured: isMailerConfigured() });
+});
+
+app.post('/api/alerts/settings', (req, res) => {
+  const { enabled, recipient } = req.body || {};
+  res.json(updateAlertSettings({ enabled, recipient }));
+});
+
+app.post('/api/alerts/test', async (req, res) => {
+  const { recipient } = getAlertSettings();
+  if (!recipient) return res.status(400).json({ error: 'No recipient configured' });
+  try {
+    await sendMail(recipient, 'CrisisWatch: test alert', '<p>This is a test alert from CrisisWatch. Email alerts are working.</p>');
+    res.json({ sent: true });
+  } catch (err) {
+    console.error('Test email failed:', err.message);
+    res.status(502).json({ error: 'Failed to send test email', debug: err.message });
+  }
 });
 
 async function fetchFeedItems(feed, limit = 5) {
@@ -280,4 +307,15 @@ app.post('/api/score', async (req, res) => {
   }
 });
 
-app.listen(port, () => console.log(`CrisisWatch API live on ${port}`));
+const ALERT_CHECK_INTERVAL_MS = (Number(process.env.ALERT_CHECK_INTERVAL_MINUTES) || 15) * 60 * 1000;
+
+app.listen(port, () => {
+  console.log(`CrisisWatch API live on ${port}`);
+  // Give the server a moment to fully warm up before the first self-check,
+  // then run on a fixed interval. runAlertCheck no-ops immediately if
+  // alerting isn't enabled/configured, so this is cheap when unused.
+  setTimeout(() => {
+    runAlertCheck(port);
+    setInterval(() => runAlertCheck(port), ALERT_CHECK_INTERVAL_MS);
+  }, 30000);
+});
