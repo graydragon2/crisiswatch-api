@@ -1,6 +1,6 @@
 # CrisisWatch API
 
-Express (ESM) backend for CrisisWatch — aggregates RSS feeds tracking local and global crises, scores/geolocates/categorizes them with Claude, checks emails against known credential leaks (on demand or persistently monitored), maintains a keyword watchlist, watches specific zip codes for local weather alerts and news, emails an alert when something high-severity shows up, and tracks a composite Threat Score over time. Paired with [crisiswatch-frontend](https://github.com/graydragon2/crisiswatch-frontend).
+Express (ESM) backend for CrisisWatch — aggregates RSS feeds tracking local and global crises, scores/geolocates/categorizes them with Claude, checks emails against known credential leaks (on demand or persistently monitored), maintains a keyword watchlist, watches specific zip codes for local weather alerts and news, emails an alert and raises an in-app notification when something high-severity shows up, and tracks a composite Threat Score over time. Paired with [crisiswatch-frontend](https://github.com/graydragon2/crisiswatch-frontend).
 
 ## Setup
 
@@ -36,6 +36,9 @@ Runs on `PORT` (defaults to `3001`).
 - `POST /api/score` — score a single arbitrary piece of text (`{ text }` body) 1–10 via Claude.
 - `GET /api/alerts/settings` / `POST /api/alerts/settings` — read/update email alert settings (`{ enabled, recipient }`, persisted to `data/alerts.json`).
 - `POST /api/alerts/test` — sends a test email to the configured recipient immediately.
+- `GET /api/notifications` — the in-app notification center's list (persisted to `data/notifications.json`) plus `unreadCount`. Each notification has a `category` of `Critical`/`High`/`Medium`/`Informational`.
+- `POST /api/notifications/:id/read` / `POST /api/notifications/read-all` — mark one or all notifications read.
+- `DELETE /api/notifications/:id` — clear one notification.
 - `GET /api/threat-score` — current composite Threat Score (0-100, band name, 24h/7d deltas) plus a per-category breakdown (Cybersecurity, Geopolitical, Conflict, Public Safety, Infrastructure, Natural Disaster, Other). 503s until the first monitoring cycle has recorded a snapshot.
 - `GET /api/threat-score/history?range=24h|7d|30d|90d` — time-series score points for that range, plus best-effort insights (peak day, busiest time-of-day window, % change, trend direction) once enough history exists.
 - `GET /api/stats` — dashboard summary counts: active critical alerts (+ new today), breaking news in the last 24h.
@@ -49,3 +52,4 @@ Runs on `PORT` (defaults to `3001`).
 - The Threat Score formula (`utils/historyStore.js`) is intentionally simple and documented in code, not a claim of rigorous risk modeling: average severity (1-10) scaled to 0-100, boosted by how many Critical-band (9-10) items are present. Category scores use the same formula scoped to items the AI classified into that category. `utils/severity.js` is the single source of truth for score-to-band-name/color mapping — reuse it rather than re-deriving thresholds elsewhere.
 - History insights (peak day, busiest time-of-day) are best-effort estimates from periodic point-in-time snapshots, not a full event log — they'll be `null` until at least 2 snapshots exist for the requested range, and "new critical today" is a diff against the day-start snapshot's count, not a deduplicated count of distinct new items.
 - `utils/darkWebCheck.js` holds the one shared LeakCheck request/response handling, used by both the on-demand `/api/darkweb` route and the persistent monitor (`utils/darkWebMonitor.js`) — don't duplicate the LeakCheck call elsewhere.
+- `utils/alertDetector.js` is the single detection pass each monitor tick runs to find newly-alertable items (high-severity threats, severe weather alerts, high-severity local news, new dark-web exposure hits) — it dedupes against `utils/alertStore.js`'s seen-list and marks items seen immediately, so it must only run once per tick. Both the in-app notification center (`utils/notificationStore.js`) and email alerts (`utils/alertChecker.js`) consume that same detection result rather than re-detecting; email alerts stay opt-in (no-op unless configured), but notifications are populated unconditionally so the notification center works even without email set up.

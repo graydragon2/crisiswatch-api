@@ -1,22 +1,18 @@
 // utils/alertChecker.js
 //
-// Checks a snapshot of threats/watched-location data (gathered once per
-// tick by dataCollector.js and shared with historyStore's snapshotter — see
-// server.js) for high-severity items and severe weather alerts, and emails
-// the configured recipient when something new (not already alerted) shows
-// up.
+// Emails the configured recipient when the shared per-tick detection pass
+// (utils/alertDetector.js) found new high-severity items, severe weather
+// alerts, or dark-web exposure hits. Detection/dedup itself lives in
+// alertDetector.js — this module only renders and sends.
 
-import { getAlertSettings, filterUnseen, markSeen } from './alertStore.js';
+import { getAlertSettings } from './alertStore.js';
 import { isMailerConfigured, sendMail } from './mailer.js';
-
-const SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD) || 8;
-const NWS_ALERT_SEVERITIES = new Set(['Extreme', 'Severe']);
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function renderEmail({ threats, weatherAlerts, localNews }) {
+function renderEmail({ threats, weatherAlerts, localNews, darkWebHits }) {
   const section = (title, rows) =>
     rows.length
       ? `<h3>${title}</h3><ul>${rows.map((r) => `<li>${r}</li>`).join('')}</ul>`
@@ -31,58 +27,39 @@ function renderEmail({ threats, weatherAlerts, localNews }) {
   const newsRows = localNews.map(
     (n) => `<a href="${escapeHtml(n.link)}">${escapeHtml(n.title)}</a> — severity ${n.score}/10 (${escapeHtml(n.city)}, ${escapeHtml(n.state)})`
   );
+  // Deliberately doesn't include the monitored email address itself, or any
+  // breach credentials — just that exposure was found and roughly how bad.
+  const darkWebRows = (darkWebHits || []).map(
+    (e) => `<strong>Dark Web Exposure</strong> — ${e.exposureCount} exposure${e.exposureCount === 1 ? '' : 's'} found for a monitored email (risk: ${escapeHtml(e.riskLevel)})`
+  );
 
   return `
     <p>CrisisWatch found new items that may warrant attention:</p>
     ${section('High-Severity Threats', threatRows)}
     ${section('Weather / Emergency Alerts', weatherRows)}
     ${section('Local News', newsRows)}
+    ${section('Dark Web Exposure', darkWebRows)}
   `;
 }
 
 /**
- * @param {{threats: object[], locations: object[]}} data from dataCollector.collectSnapshotData
+ * @param {{threats: object[], weatherAlerts: object[], localNews: object[], darkWebHits: object[]}} detected
+ *   result of alertDetector.detectNewAlertableItems
  */
-export async function runAlertCheck({ threats: allThreats, locations: allLocations }) {
+export async function sendAlertEmail({ threats, weatherAlerts, localNews, darkWebHits }) {
   const { enabled, recipient } = getAlertSettings();
   if (!enabled || !recipient || !isMailerConfigured()) return;
 
+  const total = threats.length + weatherAlerts.length + localNews.length + darkWebHits.length;
+  if (!total) return;
+
   try {
-    const candidateThreats = allThreats.filter((t) => typeof t.score === 'number' && t.score >= SCORE_THRESHOLD);
-    const threatKeys = candidateThreats.map((t) => t.link).filter(Boolean);
-    const newThreatKeys = new Set(filterUnseen(threatKeys));
-    const threats = candidateThreats.filter((t) => newThreatKeys.has(t.link));
-
-    const weatherAlertCandidates = [];
-    const newsCandidates = [];
-    for (const loc of allLocations) {
-      for (const a of loc.alerts || []) {
-        if (NWS_ALERT_SEVERITIES.has(a.severity) && a.link) {
-          weatherAlertCandidates.push({ ...a, city: loc.city, state: loc.state, key: a.link });
-        }
-      }
-      for (const n of loc.news || []) {
-        if (typeof n.score === 'number' && n.score >= SCORE_THRESHOLD && n.link) {
-          newsCandidates.push({ ...n, city: loc.city, state: loc.state, key: n.link });
-        }
-      }
-    }
-    const newWeatherKeys = new Set(filterUnseen(weatherAlertCandidates.map((a) => a.key)));
-    const newNewsKeys = new Set(filterUnseen(newsCandidates.map((n) => n.key)));
-    const weatherAlerts = weatherAlertCandidates.filter((a) => newWeatherKeys.has(a.key));
-    const localNews = newsCandidates.filter((n) => newNewsKeys.has(n.key));
-
-    if (!threats.length && !weatherAlerts.length && !localNews.length) return;
-
-    const total = threats.length + weatherAlerts.length + localNews.length;
     await sendMail(
       recipient,
       `CrisisWatch: ${total} new item${total === 1 ? '' : 's'} flagged`,
-      renderEmail({ threats, weatherAlerts, localNews })
+      renderEmail({ threats, weatherAlerts, localNews, darkWebHits })
     );
-
-    markSeen([...threats.map((t) => t.link), ...weatherAlerts.map((a) => a.key), ...localNews.map((n) => n.key)]);
   } catch (err) {
-    console.error('Alert check failed:', err.message);
+    console.error('Alert email failed:', err.message);
   }
 }
