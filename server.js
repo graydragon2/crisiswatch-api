@@ -21,6 +21,7 @@ import { recordSnapshot, getThreatScoreSummary, getHistoryRange } from './utils/
 import { checkEmailExposure } from './utils/darkWebCheck.js';
 import { getMonitoredEmails, addMonitoredEmail, removeMonitoredEmail, updateCheckResult } from './utils/monitoredEmailStore.js';
 import { refreshStaleMonitoredEmails } from './utils/darkWebMonitor.js';
+import { analyzePhishingRisk, ANALYSIS_TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES } from './utils/phishingAnalyzer.js';
 
 dotenv.config();
 
@@ -377,6 +378,38 @@ app.post('/api/score', async (req, res) => {
   } catch (err) {
     console.error('AI scoring error:', err);
     res.status(500).json({ error: 'Failed to score threat', debug: err.message });
+  }
+});
+
+// ---- Phishing Detection ----
+//
+// A larger JSON body limit is scoped to just this route (base64-encoded
+// screenshots need more than the 100kb default) rather than raised
+// globally, so every other endpoint keeps the smaller default.
+app.post('/api/phishing/analyze', express.json({ limit: '8mb' }), async (req, res) => {
+  const { type, content, mediaType } = req.body || {};
+  if (!ANALYSIS_TYPES.includes(type)) {
+    return res.status(400).json({ error: `type must be one of: ${ANALYSIS_TYPES.join(', ')}` });
+  }
+  if (!content || typeof content !== 'string') {
+    return res.status(400).json({ error: 'Missing content' });
+  }
+  if (type === 'screenshot') {
+    if (!ALLOWED_IMAGE_TYPES.includes(mediaType)) {
+      return res.status(400).json({ error: `mediaType must be one of: ${ALLOWED_IMAGE_TYPES.join(', ')}` });
+    }
+    // content is base64 — decoded size is ~3/4 of the encoded string length.
+    if (content.length * 0.75 > MAX_IMAGE_BYTES) {
+      return res.status(413).json({ error: `Screenshot too large — max ${Math.floor(MAX_IMAGE_BYTES / 1024 / 1024)}MB` });
+    }
+  }
+
+  try {
+    const result = await analyzePhishingRisk({ type, content, mediaType });
+    res.json(result);
+  } catch (err) {
+    console.error('Phishing analysis error:', err.message);
+    res.status(500).json({ error: 'Failed to analyze', debug: err.message });
   }
 });
 
