@@ -17,16 +17,21 @@ cmds = ["npm ci"]
 # exists as a Railway variable — see that file's comment. It has to: this
 # runs on every deploy, including ones before DATABASE_URL is set, and a
 # failed build here would take down the whole service, not just auth.
+# (This project's Railway service also has its own dashboard-level
+# "Custom Build Command" set to `npm install`, which takes precedence —
+# harmless here since `npm install` still fires the `postinstall` hook
+# that also runs `prisma generate`, unlike the start command below.)
 cmds = ["npx prisma generate"]
 
 [start]
-# Only attempts migrations if DATABASE_URL is actually set — unlike
-# generate, `prisma migrate deploy` genuinely needs a real connection
-# (see prisma.migrate.config.js), so this guard is what keeps a deploy
-# from before DATABASE_URL exists from failing the whole start command
-# and taking the entire API down over an unrelated-to-auth deploy.
-# Idempotent once it does run (only applies pending migration files),
-# which is the right tradeoff for a single-instance deploy at this scale
-# — revisit if this ever needs to scale to multiple concurrent instances
-# applying migrations at once.
-cmd = "sh -c 'if [ -n \"$DATABASE_URL\" ]; then npx prisma migrate deploy --config prisma.migrate.config.js; fi && node server.js'"
+# Delegates to the "start" script in package.json, which is where the
+# actual migration guard lives (only attempts `prisma migrate deploy`
+# when DATABASE_URL is set, otherwise boots straight to `node server.js`
+# — same reasoning as the build phase above: a deploy before DATABASE_URL
+# exists must not fail). It has to live in package.json rather than only
+# here: this project's Railway service has its own dashboard-level
+# "Custom Start Command" set to `npm start`, which takes precedence over
+# this file — discovered the hard way when a deploy's migration silently
+# never ran. Keeping the guard in package.json means it works regardless
+# of which of the two actually executes.
+cmd = "npm start"
