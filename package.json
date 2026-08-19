@@ -5,15 +5,22 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate dev --config prisma.migrate.config.js",
+    "db:studio": "prisma studio --config prisma.migrate.config.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
     "node-fetch": "^3.3.2",
     "nodemailer": "^9.0.5",
+    "prisma": "^7.9.1",
     "rss-parser": "^3.13.0"
   }
 }

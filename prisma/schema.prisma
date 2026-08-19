@@ -1,0 +1,42 @@
+// prisma/schema.prisma
+//
+// Phase 1 of the Contingency Brief subscription build: just enough schema
+// for magic-link auth to work end-to-end. Per-user personalization tables
+// (keywords, locations, monitored emails, alert settings, notifications)
+// and the Subscription/billing model land in later phases, once there's
+// an auth session to scope them to.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Connection URL lives in prisma.config.js (CLI/migrate) and is passed
+// directly to the PrismaPg adapter in utils/db.js (runtime) — Prisma 7
+// removed `datasource.url` from schema files.
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id               String   @id @default(uuid())
+  email            String   @unique
+  stripeCustomerId String?  @unique
+  createdAt        DateTime @default(now())
+
+  magicLinkTokens MagicLinkToken[]
+}
+
+model MagicLinkToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Only the SHA-256 hash is stored — same reasoning as never storing raw
+  // credentials elsewhere in this app. The raw token only ever exists in
+  // the emailed link and this request's memory.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
+}

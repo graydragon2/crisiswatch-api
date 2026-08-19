@@ -22,6 +22,7 @@ import { checkEmailExposure } from './utils/darkWebCheck.js';
 import { getMonitoredEmails, addMonitoredEmail, removeMonitoredEmail, updateCheckResult } from './utils/monitoredEmailStore.js';
 import { refreshStaleMonitoredEmails } from './utils/darkWebMonitor.js';
 import { analyzePhishingRisk, ANALYSIS_TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES } from './utils/phishingAnalyzer.js';
+import { createMagicLinkToken, redeemMagicLinkToken, signSession, requireAuth } from './utils/auth.js';
 
 dotenv.config();
 
@@ -74,6 +75,46 @@ app.get('/api/status', (req, res) => {
     feedCount: getFeeds().length,
     keywordCount: getKeywords().length
   });
+});
+
+// ---- Auth (magic link) ----
+//
+// Phase 1 of the subscription build — issues sessions, but nothing is
+// gated behind them yet (that starts once per-user data tables exist).
+
+app.post('/api/auth/magic-link', async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Missing or invalid email' });
+
+  try {
+    const { rawToken } = await createMagicLinkToken(email);
+    const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/verify?token=${rawToken}`;
+    await sendMail(
+      email,
+      'Your Contingency Brief sign-in link',
+      `<p>Click below to sign in. This link expires in 15 minutes and can only be used once.</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`
+    );
+    res.json({ sent: true });
+  } catch (err) {
+    console.error('Magic link request failed:', err.message);
+    res.status(500).json({ error: 'Failed to send sign-in link', debug: err.message });
+  }
+});
+
+app.post('/api/auth/verify', async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Missing token' });
+
+  try {
+    const user = await redeemMagicLinkToken(token);
+    res.json({ token: signSession(user), user });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  res.json({ user: req.user });
 });
 
 // ---- Email alerts ----
