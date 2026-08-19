@@ -9,5 +9,24 @@ providers = ["node"]
 [phases.install]
 cmds = ["npm ci"]
 
+[phases.build]
+# Regenerates the Prisma client from schema.prisma — needs to happen on
+# every deploy, not just when node_modules changes, since `npm ci` alone
+# doesn't re-run generators. Uses the default (datasource-free)
+# prisma.config.js, so this always succeeds even before DATABASE_URL
+# exists as a Railway variable — see that file's comment. It has to: this
+# runs on every deploy, including ones before DATABASE_URL is set, and a
+# failed build here would take down the whole service, not just auth.
+cmds = ["npx prisma generate"]
+
 [start]
-cmd = "node server.js"
+# Only attempts migrations if DATABASE_URL is actually set — unlike
+# generate, `prisma migrate deploy` genuinely needs a real connection
+# (see prisma.migrate.config.js), so this guard is what keeps a deploy
+# from before DATABASE_URL exists from failing the whole start command
+# and taking the entire API down over an unrelated-to-auth deploy.
+# Idempotent once it does run (only applies pending migration files),
+# which is the right tradeoff for a single-instance deploy at this scale
+# — revisit if this ever needs to scale to multiple concurrent instances
+# applying migrations at once.
+cmd = "sh -c 'if [ -n \"$DATABASE_URL\" ]; then npx prisma migrate deploy --config prisma.migrate.config.js; fi && node server.js'"
