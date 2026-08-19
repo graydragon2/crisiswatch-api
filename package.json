@@ -4,6 +4,9 @@
   "description": "Backend for CrisisWatch",
   "type": "module",
   "main": "server.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "node server.js",
     "postinstall": "prisma generate",
