@@ -9,6 +9,7 @@
 
 import Stripe from 'stripe';
 import { getDb } from './db.js';
+import { getFrontendUrl } from './frontendUrl.js';
 
 let client;
 function getClient() {
@@ -18,8 +19,6 @@ function getClient() {
   }
   return client;
 }
-
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 /**
  * Ensures this user has a Stripe Customer, creating one on first use.
@@ -51,8 +50,8 @@ export async function createCheckoutSession(userId) {
     mode: 'subscription',
     customer: customerId,
     line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-    success_url: `${FRONTEND_URL}/subscribe?success=true`,
-    cancel_url: `${FRONTEND_URL}/subscribe?canceled=true`
+    success_url: `${getFrontendUrl()}/subscribe?success=true`,
+    cancel_url: `${getFrontendUrl()}/subscribe?canceled=true`
   });
   return session.url;
 }
@@ -65,7 +64,7 @@ export async function createPortalSession(userId) {
   const customerId = await getOrCreateStripeCustomer(userId);
   const session = await getClient().billingPortal.sessions.create({
     customer: customerId,
-    return_url: `${FRONTEND_URL}/profile`
+    return_url: `${getFrontendUrl()}/profile`
   });
   return session.url;
 }

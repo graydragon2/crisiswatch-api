@@ -25,6 +25,7 @@ import { createMagicLinkToken, redeemMagicLinkToken, signSession, requireAuth } 
 import { getWatchedLocationsWithNews } from './utils/locationsAggregator.js';
 import { getDb } from './utils/db.js';
 import { createCheckoutSession, createPortalSession, handleWebhookEvent, getSubscriptionStatus } from './utils/billing.js';
+import { getFrontendUrl } from './utils/frontendUrl.js';
 
 dotenv.config();
 
@@ -120,7 +121,7 @@ app.post('/api/auth/magic-link', async (req, res) => {
 
   try {
     const { rawToken } = await createMagicLinkToken(email);
-    const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/verify?token=${rawToken}`;
+    const verifyUrl = `${getFrontendUrl()}/auth/verify?token=${rawToken}`;
     await sendMail(
       email,
       'Your Contingency Brief sign-in link',
