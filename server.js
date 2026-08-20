@@ -50,7 +50,17 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
   }
 });
 
-app.use(express.json());
+// /api/phishing/analyze registers its own express.json({ limit: '8mb' })
+// (below), but that override is useless unless this default-limit (100kb)
+// parser skips that path first — Express runs middleware in registration
+// order, so without this exclusion the default limit would already reject
+// an oversized screenshot (as a 413) before the route-specific parser ever
+// got a chance to apply its higher limit.
+const defaultJsonParser = express.json();
+app.use((req, res, next) => {
+  if (req.path === '/api/phishing/analyze') return next();
+  defaultJsonParser(req, res, next);
+});
 
 // Every route here is either live-scored (threats, locations, stats) or
 // per-user auth-scoped data — nothing should ever be cached by an
@@ -560,6 +570,18 @@ async function runMonitorTick() {
     }
   }
 }
+
+// Safety net, registered after every route — Express recognizes an error
+// handler by its four-argument signature. Without this, an error thrown
+// before a route handler runs (e.g. a body-parser rejection like an
+// oversized payload) falls through to Express's default HTML error page,
+// which frontend code can't parse as JSON ("Unexpected token '<' ... is
+// not valid JSON" — exactly what an oversized /api/phishing/analyze
+// screenshot produced before the express.json() ordering fix above).
+app.use((err, req, res, next) => {
+  console.error('Unhandled request error:', err.message);
+  res.status(err.status || err.statusCode || 500).json({ error: err.message || 'Internal server error' });
+});
 
 app.listen(port, () => {
   console.log(`CrisisWatch API live on ${port}`);
