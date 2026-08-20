@@ -34,7 +34,7 @@ function renderEmail({ threats, weatherAlerts, localNews, darkWebHits }) {
   );
 
   return `
-    <p>CrisisWatch found new items that may warrant attention:</p>
+    <p>Contingency Brief found new items that may warrant attention:</p>
     ${section('High-Severity Threats', threatRows)}
     ${section('Weather / Emergency Alerts', weatherRows)}
     ${section('Local News', newsRows)}
@@ -57,7 +57,7 @@ export async function sendAlertEmail(userId, { threats, weatherAlerts, localNews
   try {
     await sendMail(
       recipient,
-      `CrisisWatch: ${total} new item${total === 1 ? '' : 's'} flagged`,
+      `Contingency Brief: ${total} new item${total === 1 ? '' : 's'} flagged`,
       renderEmail({ threats, weatherAlerts, localNews, darkWebHits })
     );
   } catch (err) {

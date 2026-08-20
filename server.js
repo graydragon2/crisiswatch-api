@@ -206,7 +206,7 @@ app.post('/api/alerts/test', requireAuth, async (req, res) => {
   const { recipient } = await getAlertSettings(req.user.id);
   if (!recipient) return res.status(400).json({ error: 'No recipient configured' });
   try {
-    await sendMail(recipient, 'CrisisWatch: test alert', '<p>This is a test alert from CrisisWatch. Email alerts are working.</p>');
+    await sendMail(recipient, 'Contingency Brief: test alert', '<p>This is a test alert from Contingency Brief. Email alerts are working.</p>');
     res.json({ sent: true });
   } catch (err) {
     console.error('Test email failed:', err.message);
