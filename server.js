@@ -24,14 +24,32 @@ import { analyzePhishingRisk, ANALYSIS_TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYT
 import { createMagicLinkToken, redeemMagicLinkToken, signSession, requireAuth } from './utils/auth.js';
 import { getWatchedLocationsWithNews } from './utils/locationsAggregator.js';
 import { getDb } from './utils/db.js';
+import { createCheckoutSession, createPortalSession, handleWebhookEvent, getSubscriptionStatus } from './utils/billing.js';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(express.json());
 app.use(cors());
+
+// Stripe needs the raw, unparsed request body to verify a webhook's
+// signature — has to be registered before the global express.json() below,
+// since Express runs matching middleware/routes in registration order and
+// the global JSON parser would otherwise consume the body first, leaving
+// nothing for signature verification to check.
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const signature = req.headers['stripe-signature'];
+  try {
+    await handleWebhookEvent(req.body, signature);
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Stripe webhook error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.use(express.json());
 
 // Every route here is either live-scored (threats, locations, stats) or
 // per-user auth-scoped data — nothing should ever be cached by an
@@ -129,6 +147,37 @@ app.post('/api/auth/verify', async (req, res) => {
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: req.user });
+});
+
+// ---- Billing (Stripe subscription) ----
+//
+// Checkout/portal just redirect to Stripe-hosted pages — subscription
+// status is never trusted from the client, only ever written by
+// /api/billing/webhook (registered above, before express.json(), since it
+// needs the raw body for signature verification).
+
+app.post('/api/billing/checkout', requireAuth, async (req, res) => {
+  try {
+    const url = await createCheckoutSession(req.user.id);
+    res.json({ url });
+  } catch (err) {
+    console.error('Checkout session creation failed:', err.message);
+    res.status(500).json({ error: 'Failed to start checkout', debug: err.message });
+  }
+});
+
+app.post('/api/billing/portal', requireAuth, async (req, res) => {
+  try {
+    const url = await createPortalSession(req.user.id);
+    res.json({ url });
+  } catch (err) {
+    console.error('Portal session creation failed:', err.message);
+    res.status(500).json({ error: 'Failed to open billing portal', debug: err.message });
+  }
+});
+
+app.get('/api/billing/status', requireAuth, async (req, res) => {
+  res.json(await getSubscriptionStatus(req.user.id));
 });
 
 // ---- Email alerts ----
