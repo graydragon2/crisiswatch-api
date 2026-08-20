@@ -1,11 +1,16 @@
 // utils/darkWebMonitor.js
 //
-// Re-checks monitored emails on a much longer cadence than the main
-// monitor tick — breach data doesn't change minute to minute, and
+// Re-checks a user's monitored emails on a much longer cadence than the
+// main monitor tick — breach data doesn't change minute to minute, and
 // LeakCheck's free/public tier has rate limits, so hammering it every 15
 // minutes for every monitored address would be wasteful and risks getting
 // throttled. Only re-checks entries whose last check is stale (or that
 // have never been checked).
+//
+// Runs per-user (see server.js's runMonitorTick) rather than deduping a
+// shared email across users — if two users monitor the same address it's
+// checked twice. Simple and correct; revisit if LeakCheck's rate limit
+// becomes a real constraint.
 
 import { getMonitoredEmails, updateCheckResult } from './monitoredEmailStore.js';
 import { checkEmailExposure } from './darkWebCheck.js';
@@ -17,17 +22,17 @@ function isStale(entry) {
   return Date.now() - new Date(entry.lastChecked).getTime() >= STALE_AFTER_MS;
 }
 
-export async function refreshStaleMonitoredEmails() {
+export async function refreshStaleMonitoredEmails(userId) {
   if (!process.env.LEAKCHECK_API_KEY) return;
 
-  const stale = getMonitoredEmails().filter(isStale);
+  const stale = (await getMonitoredEmails(userId)).filter(isStale);
   for (const entry of stale) {
     try {
       const result = await checkEmailExposure(entry.email);
-      updateCheckResult(entry.email, result);
+      await updateCheckResult(userId, entry.email, result);
     } catch (err) {
       console.error(`Dark web check failed for a monitored email:`, err.message);
-      updateCheckResult(entry.email, { error: err.message });
+      await updateCheckResult(userId, entry.email, { error: err.message });
     }
   }
 }

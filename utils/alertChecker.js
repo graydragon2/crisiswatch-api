@@ -43,11 +43,12 @@ function renderEmail({ threats, weatherAlerts, localNews, darkWebHits }) {
 }
 
 /**
+ * @param {string} userId
  * @param {{threats: object[], weatherAlerts: object[], localNews: object[], darkWebHits: object[]}} detected
  *   result of alertDetector.detectNewAlertableItems
  */
-export async function sendAlertEmail({ threats, weatherAlerts, localNews, darkWebHits }) {
-  const { enabled, recipient } = getAlertSettings();
+export async function sendAlertEmail(userId, { threats, weatherAlerts, localNews, darkWebHits }) {
+  const { enabled, recipient } = await getAlertSettings(userId);
   if (!enabled || !recipient || !isMailerConfigured()) return;
 
   const total = threats.length + weatherAlerts.length + localNews.length + darkWebHits.length;

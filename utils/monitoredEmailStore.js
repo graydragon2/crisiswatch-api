@@ -1,86 +1,70 @@
 // utils/monitoredEmailStore.js
 //
-// Tracks a watchlist of email addresses for persistent dark-web exposure
-// monitoring, plus the result of their most recent check. Same persistence
-// pattern as the other stores in this project — the current-state-per-item
-// shape (not a separate history log) matches locationStore.js/
-// locationWatch.js rather than historyStore.js, since "is this email
-// currently exposed" is what matters, not a time series.
+// Tracks a per-user watchlist of email addresses for persistent dark-web
+// exposure monitoring, plus the result of their most recent check. Moved
+// off flat JSON to Postgres in Phase 2 — see prisma/schema.prisma's
+// MonitoredEmail model. The current-state-per-item shape (not a separate
+// history log) is unchanged from the old store: "is this email currently
+// exposed" is what matters, not a time series.
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from './db.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const filePath = path.join(__dirname, '../data/monitoredEmails.json');
+function toEntry(row) {
+  return {
+    email: row.email,
+    addedAt: row.createdAt.toISOString(),
+    status: row.status,
+    lastChecked: row.lastChecked ? row.lastChecked.toISOString() : null,
+    found: row.found,
+    exposureCount: row.exposureCount,
+    riskLevel: row.riskLevel,
+    entries: row.entries,
+    error: row.error || undefined
+  };
+}
 
-function readAll() {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    console.error('Failed to read monitored emails file:', err);
-    return [];
+export async function getMonitoredEmails(userId) {
+  const rows = await getDb().monitoredEmail.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  return rows.map(toEntry);
+}
+
+export async function addMonitoredEmail(userId, email) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return getMonitoredEmails(userId);
+  const existing = await getDb().monitoredEmail.findUnique({ where: { userId_email: { userId, email: normalized } } });
+  if (!existing) {
+    await getDb().monitoredEmail.create({ data: { userId, email: normalized } });
   }
+  return getMonitoredEmails(userId);
 }
 
-function writeAll(entries) {
-  fs.writeFileSync(filePath, JSON.stringify(entries, null, 2));
-}
-
-export function getMonitoredEmails() {
-  return readAll();
-}
-
-export function addMonitoredEmail(email) {
+export async function removeMonitoredEmail(userId, email) {
   const normalized = email.trim().toLowerCase();
-  const entries = readAll();
-  if (!normalized || entries.some((e) => e.email === normalized)) return entries;
-  entries.push({
-    email: normalized,
-    addedAt: new Date().toISOString(),
-    status: 'pending',
-    lastChecked: null,
-    found: null,
-    exposureCount: 0,
-    riskLevel: 'Unknown',
-    entries: []
-  });
-  writeAll(entries);
-  return entries;
-}
-
-export function removeMonitoredEmail(email) {
-  const normalized = email.trim().toLowerCase();
-  const entries = readAll().filter((e) => e.email !== normalized);
-  writeAll(entries);
-  return entries;
+  await getDb().monitoredEmail.deleteMany({ where: { userId, email: normalized } });
+  return getMonitoredEmails(userId);
 }
 
 /**
  * Overwrites one monitored email's check result in place.
+ * @param {string} userId
  * @param {string} email
  * @param {{found: boolean, entries: string[]}|{error: string}} result
  */
-export function updateCheckResult(email, result) {
-  const entries = readAll();
-  const entry = entries.find((e) => e.email === email);
-  if (!entry) return entries;
-
-  entry.lastChecked = new Date().toISOString();
+export async function updateCheckResult(userId, email, result) {
+  const data = { lastChecked: new Date() };
   if (result.error) {
-    entry.status = 'error';
-    entry.error = result.error;
+    data.status = 'error';
+    data.error = result.error;
   } else {
-    entry.status = 'active';
-    entry.error = undefined;
-    entry.found = result.found;
-    entry.exposureCount = result.entries.length;
-    entry.entries = result.entries;
-    entry.riskLevel = riskLevelFor(result.entries.length);
+    data.status = 'active';
+    data.error = null;
+    data.found = result.found;
+    data.exposureCount = result.entries.length;
+    data.entries = result.entries;
+    data.riskLevel = riskLevelFor(result.entries.length);
   }
-  writeAll(entries);
-  return entries;
+  await getDb().monitoredEmail.updateMany({ where: { userId, email }, data });
+  return getMonitoredEmails(userId);
 }
 
 // Simple, documented heuristic — not a claim of precise risk scoring, just
