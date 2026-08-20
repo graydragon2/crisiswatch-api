@@ -24,10 +24,20 @@ datasource db {
 }
 
 model User {
-  id               String   @id @default(uuid())
-  email            String   @unique
-  stripeCustomerId String?  @unique
-  createdAt        DateTime @default(now())
+  id                   String    @id @default(uuid())
+  email                String    @unique
+  stripeCustomerId     String?   @unique
+  // Phase 3 billing state — kept directly on User rather than a separate
+  // Subscription table since each user has at most one subscription (a
+  // single ~$9/mo tier, no per-user multi-subscription case to model).
+  // Values mirror Stripe's own subscription status strings (active,
+  // trialing, past_due, canceled, unpaid, incomplete, incomplete_expired)
+  // rather than inventing a parallel enum — kept in sync by the
+  // /api/billing/webhook handler.
+  stripeSubscriptionId String?   @unique
+  subscriptionStatus   String?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
 
   magicLinkTokens  MagicLinkToken[]
   keywords         Keyword[]

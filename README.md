@@ -13,7 +13,7 @@ npm start
 
 Runs on `PORT` (defaults to `3001`).
 
-This is mid-migration from a single-user personal tool to a multi-tenant subscription product ("Contingency Brief"). Phase 1 added `DATABASE_URL`/`JWT_SECRET` and magic-link auth (`/api/auth/*`). Phase 2 moved the per-user personalization data (keywords, watched locations, monitored emails, alert settings, in-app notifications) off flat JSON and onto the same Postgres database, scoped by `userId` — every route below that touches one of those now requires `Authorization: Bearer <token>` and 401s without it. `feeds.json` and the Threat Score history stay on the filesystem (backed by a Railway volume) since they're shared/product-wide, not per-user. Existing pre-migration data isn't auto-imported — run `npm run migrate-legacy-data` once against the real database (see `scripts/migrate-legacy-data.js`) to copy it into "account #1".
+This is mid-migration from a single-user personal tool to a multi-tenant subscription product ("Contingency Brief"). Phase 1 added `DATABASE_URL`/`JWT_SECRET` and magic-link auth (`/api/auth/*`). Phase 2 moved the per-user personalization data (keywords, watched locations, monitored emails, alert settings, in-app notifications) off flat JSON and onto the same Postgres database, scoped by `userId` — every route below that touches one of those now requires `Authorization: Bearer <token>` and 401s without it. `feeds.json` and the Threat Score history stay on the filesystem (backed by a Railway volume) since they're shared/product-wide, not per-user. Existing pre-migration data isn't auto-imported — run `npm run migrate-legacy-data` once against the real database (see `scripts/migrate-legacy-data.js`) to copy it into "account #1". Phase 3 adds Stripe subscription billing (`/api/billing/*`) — a single $9/mo tier, no free tier yet.
 
 ## Environment variables
 
@@ -30,13 +30,20 @@ This is mid-migration from a single-user personal tool to a multi-tenant subscri
 | `DARKWEB_RECHECK_HOURS` | No | How often to re-check monitored emails for new exposure (default `24`) — independent of `MONITOR_INTERVAL_MINUTES`, since breach data doesn't change minute to minute |
 | `DATABASE_URL` | Only for `/api/auth/*` | Postgres connection string. `npx prisma studio` to browse it, `npm run db:migrate` to apply schema changes locally. |
 | `JWT_SECRET` | Only for `/api/auth/*` | Signs session tokens. Generate with `openssl rand -hex 32`; never reuse the dev value in production. |
-| `FRONTEND_URL` | No | Base URL used to build the link inside magic-link emails (default `http://localhost:3000`) |
+| `FRONTEND_URL` | No | Base URL used to build the link inside magic-link emails, and Stripe Checkout/Portal redirect targets (default `http://localhost:3000`) |
+| `STRIPE_SECRET_KEY` | Only for `/api/billing/*` | Sandbox (test) or live secret key from the Stripe dashboard's API keys page |
+| `STRIPE_PRICE_ID` | Only for `/api/billing/checkout` | The recurring Price ID for the $9/mo Contingency Brief subscription |
+| `STRIPE_WEBHOOK_SECRET` | Only for `/api/billing/webhook` | Signing secret for the webhook endpoint, from the Stripe dashboard's Webhooks page — required to verify events actually came from Stripe |
 
 ## API
 
 - `POST /api/auth/magic-link` — body `{ email }`. Finds-or-creates the user, emails a one-time sign-in link (15-minute expiry, single use) to `FRONTEND_URL/auth/verify?token=...`.
 - `POST /api/auth/verify` — body `{ token }`. Redeems the token, returns `{ token: <session JWT>, user }`. The JWT is a 30-day bearer token — send it as `Authorization: Bearer <token>` on subsequent requests. (Bearer header rather than a cookie: the frontend and this API are different origins, and a bearer token sidesteps cross-origin cookie/CORS-credential complexity — see the comment in `utils/auth.js`.)
 - `GET /api/auth/me` — requires `Authorization: Bearer <token>`. Returns `{ user: { id, email } }`.
+- `POST /api/billing/checkout` — 🔒 requires auth. Creates (or reuses) this user's Stripe Customer and a Checkout session for the $9/mo subscription, returns `{ url }` to redirect the browser to.
+- `POST /api/billing/portal` — 🔒 requires auth. Creates a Stripe Billing Portal session so the user can update payment info or cancel, returns `{ url }`.
+- `GET /api/billing/status` — 🔒 requires auth. Returns `{ status, currentPeriodEnd }` — `status` mirrors Stripe's own subscription status strings (`active`, `trialing`, `past_due`, `canceled`, etc.) and is `null` until the user has ever subscribed.
+- `POST /api/billing/webhook` — Stripe-only, not for browser use. Verifies the event signature (`STRIPE_WEBHOOK_SECRET`) and applies subscription lifecycle events (`checkout.session.completed`, `customer.subscription.*`) to the corresponding user. This is the *only* place subscription status is ever written — checkout/portal just redirect to Stripe and wait for this.
 - `GET /api/feeds` / `POST /api/feeds` / `DELETE /api/feeds` — manage the tracked RSS feed list (shared/global, persisted to `data/feeds.json`).
 - `GET /api/keywords` / `POST /api/keywords` / `DELETE /api/keywords` — 🔒 requires auth. Per-user keyword watchlist (Postgres `Keyword` table), used to drive the frontend's "Keywords Alert" widget.
 - `GET /api/locations` / `POST /api/locations` / `DELETE /api/locations` — 🔒 requires auth. Per-user watched zip codes (Postgres `WatchedLocation` table). `GET` geocodes each zip, pulls active NWS weather/emergency alerts for that point, and pulls a location-scoped local news feed, optionally scored via Claude (`useAI`, `true` by default). No API key needed for the geocoding or NWS lookups — only the optional news scoring uses `ANTHROPIC_API_KEY`.
