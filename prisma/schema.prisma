@@ -1,10 +1,16 @@
 // prisma/schema.prisma
 //
-// Phase 1 of the Contingency Brief subscription build: just enough schema
-// for magic-link auth to work end-to-end. Per-user personalization tables
-// (keywords, locations, monitored emails, alert settings, notifications)
-// and the Subscription/billing model land in later phases, once there's
-// an auth session to scope them to.
+// Phase 1 added just enough schema for magic-link auth to work end-to-end.
+// Phase 2 adds the per-user personalization tables below (keywords,
+// locations, monitored emails, alert settings, notifications), migrated off
+// the old flat-JSON files in data/*.json — see scripts/migrate-legacy-data.js
+// for the one-off import of pre-existing data into account #1. The
+// Subscription/billing model lands in Phase 3.
+//
+// feeds.json and the threat-score history are deliberately NOT per-user
+// here — they're the shared, product-wide RSS source list and composite
+// score, not personalization data, so they stay on the filesystem (backed
+// by the Railway volume) for now.
 
 generator client {
   provider = "prisma-client-js"
@@ -23,7 +29,13 @@ model User {
   stripeCustomerId String?  @unique
   createdAt        DateTime @default(now())
 
-  magicLinkTokens MagicLinkToken[]
+  magicLinkTokens  MagicLinkToken[]
+  keywords         Keyword[]
+  watchedLocations WatchedLocation[]
+  monitoredEmails  MonitoredEmail[]
+  alertSetting     AlertSetting?
+  seenAlertKeys    SeenAlertKey[]
+  notifications    Notification[]
 }
 
 model MagicLinkToken {
@@ -39,4 +51,79 @@ model MagicLinkToken {
   createdAt DateTime  @default(now())
 
   @@index([expiresAt])
+}
+
+model Keyword {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  value     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, value])
+}
+
+model WatchedLocation {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  zip       String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, zip])
+}
+
+model MonitoredEmail {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email         String
+  status        String    @default("pending")
+  lastChecked   DateTime?
+  found         Boolean?
+  exposureCount Int       @default(0)
+  riskLevel     String    @default("Unknown")
+  // LeakCheck's per-breach detail rows — kept as opaque JSON, same shape the
+  // old flat-JSON store persisted, since nothing here needs to query inside it.
+  entries       Json      @default("[]")
+  error         String?
+  createdAt     DateTime  @default(now())
+
+  @@unique([userId, email])
+}
+
+model AlertSetting {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enabled   Boolean  @default(false)
+  recipient String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+// Dedup log for the per-tick alert detector (utils/alertDetector.js) — same
+// role the old alerts.json "seen" array played, just scoped per user and
+// pruned to the most recent MAX_SEEN rows instead of a fixed-size array.
+model SeenAlertKey {
+  id     String   @id @default(uuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key    String
+  seenAt DateTime @default(now())
+
+  @@unique([userId, key])
+  @@index([userId, seenAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String
+  title     String
+  message   String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

@@ -1,45 +1,31 @@
 // utils/locationStore.js
 //
-// Tracks a watchlist of zip codes for the "Watched Locations" dashboard
-// feature. Same persistence pattern as feedStore.js/keywordStore.js.
+// Tracks a per-user watchlist of zip codes for the "Watched Locations"
+// dashboard feature. Moved off flat JSON to Postgres in Phase 2 — see
+// prisma/schema.prisma's WatchedLocation model and
+// scripts/migrate-legacy-data.js for the one-off import of the old shared
+// list into account #1.
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from './db.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const locationsFilePath = path.join(__dirname, '../data/locations.json');
-
-function readLocations() {
-  try {
-    return JSON.parse(fs.readFileSync(locationsFilePath, 'utf-8'));
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    console.error('Failed to read locations file:', err);
-    return [];
-  }
+export async function getLocations(userId) {
+  const rows = await getDb().watchedLocation.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  return rows.map((r) => r.zip);
 }
 
-function writeLocations(locations) {
-  fs.writeFileSync(locationsFilePath, JSON.stringify(locations, null, 2));
-}
-
-export function getLocations() {
-  return readLocations();
-}
-
-export function addLocation(zip) {
-  const locations = readLocations();
+export async function addLocation(userId, zip) {
   const normalized = zip.trim();
-  if (!normalized || locations.includes(normalized)) return locations;
-  locations.push(normalized);
-  writeLocations(locations);
-  return locations;
+  if (!normalized) return getLocations(userId);
+  await getDb().watchedLocation.upsert({
+    where: { userId_zip: { userId, zip: normalized } },
+    create: { userId, zip: normalized },
+    update: {}
+  });
+  return getLocations(userId);
 }
 
-export function removeLocation(zip) {
+export async function removeLocation(userId, zip) {
   const normalized = zip.trim();
-  const locations = readLocations().filter((z) => z !== normalized);
-  writeLocations(locations);
-  return locations;
+  await getDb().watchedLocation.deleteMany({ where: { userId, zip: normalized } });
+  return getLocations(userId);
 }

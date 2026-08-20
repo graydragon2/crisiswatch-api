@@ -15,12 +15,13 @@ const SCORE_THRESHOLD = Number(process.env.ALERT_SCORE_THRESHOLD) || 8;
 const NWS_ALERT_SEVERITIES = new Set(['Extreme', 'Severe']);
 
 /**
+ * @param {string} userId
  * @param {{threats: object[], locations: object[], monitoredEmails: object[]}} data
  */
-export function detectNewAlertableItems({ threats: allThreats, locations: allLocations, monitoredEmails }) {
+export async function detectNewAlertableItems(userId, { threats: allThreats, locations: allLocations, monitoredEmails }) {
   const candidateThreats = allThreats.filter((t) => typeof t.score === 'number' && t.score >= SCORE_THRESHOLD);
   const threatKeys = candidateThreats.map((t) => t.link).filter(Boolean);
-  const newThreatKeys = new Set(filterUnseen(threatKeys));
+  const newThreatKeys = new Set(await filterUnseen(userId, threatKeys));
   const threats = candidateThreats.filter((t) => newThreatKeys.has(t.link));
 
   const weatherAlertCandidates = [];
@@ -37,8 +38,8 @@ export function detectNewAlertableItems({ threats: allThreats, locations: allLoc
       }
     }
   }
-  const newWeatherKeys = new Set(filterUnseen(weatherAlertCandidates.map((a) => a.key)));
-  const newNewsKeys = new Set(filterUnseen(newsCandidates.map((n) => n.key)));
+  const newWeatherKeys = new Set(await filterUnseen(userId, weatherAlertCandidates.map((a) => a.key)));
+  const newNewsKeys = new Set(await filterUnseen(userId, newsCandidates.map((n) => n.key)));
   const weatherAlerts = weatherAlertCandidates.filter((a) => newWeatherKeys.has(a.key));
   const localNews = newsCandidates.filter((n) => newNewsKeys.has(n.key));
 
@@ -47,10 +48,10 @@ export function detectNewAlertableItems({ threats: allThreats, locations: allLoc
   const darkWebCandidates = (monitoredEmails || [])
     .filter((e) => e.status === 'active' && e.found && e.exposureCount > 0)
     .map((e) => ({ ...e, key: `darkweb:${e.email}:${e.exposureCount}` }));
-  const newDarkWebKeys = new Set(filterUnseen(darkWebCandidates.map((e) => e.key)));
+  const newDarkWebKeys = new Set(await filterUnseen(userId, darkWebCandidates.map((e) => e.key)));
   const darkWebHits = darkWebCandidates.filter((e) => newDarkWebKeys.has(e.key));
 
-  markSeen([
+  await markSeen(userId, [
     ...threats.map((t) => t.link),
     ...weatherAlerts.map((a) => a.key),
     ...localNews.map((n) => n.key),

@@ -11,7 +11,8 @@
     "start": "sh -c 'if [ -n \"$DATABASE_URL\" ]; then npx prisma migrate deploy --config prisma.migrate.config.js || echo \"Migration failed — starting anyway; auth routes will error until this is fixed\"; fi; node server.js'",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev --config prisma.migrate.config.js",
-    "db:studio": "prisma studio --config prisma.migrate.config.js"
+    "db:studio": "prisma studio --config prisma.migrate.config.js",
+    "migrate-legacy-data": "node scripts/migrate-legacy-data.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

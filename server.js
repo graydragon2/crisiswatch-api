@@ -8,8 +8,7 @@ import https from 'https';
 import { getFeeds, addFeed, removeFeed } from './utils/feedStore.js';
 import { getKeywords, addKeyword, removeKeyword } from './utils/keywordStore.js';
 import { getLocations, addLocation, removeLocation } from './utils/locationStore.js';
-import { watchLocation } from './utils/locationWatch.js';
-import { scoreText, scoreTexts, scoreAndLocateTexts } from './utils/threatScorer.js';
+import { scoreText, scoreAndLocateTexts } from './utils/threatScorer.js';
 import { resolveCoordinates } from './utils/geoLookup.js';
 import { getAlertSettings, updateAlertSettings } from './utils/alertStore.js';
 import { isMailerConfigured, sendMail } from './utils/mailer.js';
@@ -23,6 +22,8 @@ import { getMonitoredEmails, addMonitoredEmail, removeMonitoredEmail, updateChec
 import { refreshStaleMonitoredEmails } from './utils/darkWebMonitor.js';
 import { analyzePhishingRisk, ANALYSIS_TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES } from './utils/phishingAnalyzer.js';
 import { createMagicLinkToken, redeemMagicLinkToken, signSession, requireAuth } from './utils/auth.js';
+import { getWatchedLocationsWithNews } from './utils/locationsAggregator.js';
+import { getDb } from './utils/db.js';
 
 dotenv.config();
 
@@ -66,14 +67,15 @@ app.get('/', (req, res) => {
 });
 
 // Config presence only — never the actual key values — so the Admin Panel
-// can show an at-a-glance health view without exposing secrets.
+// can show an at-a-glance health view without exposing secrets. keywordCount
+// dropped in Phase 2 — keywords are per-user now, so there's no longer a
+// single global count to report here.
 app.get('/api/status', (req, res) => {
   res.json({
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
     leakcheckConfigured: Boolean(process.env.LEAKCHECK_API_KEY),
     mailerConfigured: isMailerConfigured(),
-    feedCount: getFeeds().length,
-    keywordCount: getKeywords().length
+    feedCount: getFeeds().length
   });
 });
 
@@ -119,17 +121,17 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 
 // ---- Email alerts ----
 
-app.get('/api/alerts/settings', (req, res) => {
-  res.json({ ...getAlertSettings(), mailerConfigured: isMailerConfigured() });
+app.get('/api/alerts/settings', requireAuth, async (req, res) => {
+  res.json({ ...(await getAlertSettings(req.user.id)), mailerConfigured: isMailerConfigured() });
 });
 
-app.post('/api/alerts/settings', (req, res) => {
+app.post('/api/alerts/settings', requireAuth, async (req, res) => {
   const { enabled, recipient } = req.body || {};
-  res.json(updateAlertSettings({ enabled, recipient }));
+  res.json(await updateAlertSettings(req.user.id, { enabled, recipient }));
 });
 
-app.post('/api/alerts/test', async (req, res) => {
-  const { recipient } = getAlertSettings();
+app.post('/api/alerts/test', requireAuth, async (req, res) => {
+  const { recipient } = await getAlertSettings(req.user.id);
   if (!recipient) return res.status(400).json({ error: 'No recipient configured' });
   try {
     await sendMail(recipient, 'CrisisWatch: test alert', '<p>This is a test alert from CrisisWatch. Email alerts are working.</p>');
@@ -188,66 +190,41 @@ app.delete('/api/feeds', (req, res) => {
 
 // ---- Keyword watchlist ("Keywords Alert") ----
 
-app.get('/api/keywords', (req, res) => {
-  res.json({ keywords: getKeywords() });
+app.get('/api/keywords', requireAuth, async (req, res) => {
+  res.json({ keywords: await getKeywords(req.user.id) });
 });
 
-app.post('/api/keywords', (req, res) => {
+app.post('/api/keywords', requireAuth, async (req, res) => {
   const { keyword } = req.body || {};
   if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
-  res.json({ keywords: addKeyword(keyword) });
+  res.json({ keywords: await addKeyword(req.user.id, keyword) });
 });
 
-app.delete('/api/keywords', (req, res) => {
+app.delete('/api/keywords', requireAuth, async (req, res) => {
   const { keyword } = req.body || {};
   if (!keyword) return res.status(400).json({ error: 'Missing keyword' });
-  res.json({ keywords: removeKeyword(keyword) });
+  res.json({ keywords: await removeKeyword(req.user.id, keyword) });
 });
 
 // ---- Watched locations ("Watched Locations": weather alerts + local news per zip) ----
 
-app.post('/api/locations', (req, res) => {
+app.post('/api/locations', requireAuth, async (req, res) => {
   const { zip } = req.body || {};
   if (!zip) return res.status(400).json({ error: 'Missing zip' });
-  res.json({ locations: addLocation(zip) });
+  res.json({ locations: await addLocation(req.user.id, zip) });
 });
 
-app.delete('/api/locations', (req, res) => {
+app.delete('/api/locations', requireAuth, async (req, res) => {
   const { zip } = req.body || {};
   if (!zip) return res.status(400).json({ error: 'Missing zip' });
-  res.json({ locations: removeLocation(zip) });
+  res.json({ locations: await removeLocation(req.user.id, zip) });
 });
 
-app.get('/api/locations', async (req, res) => {
+app.get('/api/locations', requireAuth, async (req, res) => {
   const useAI = req.query.useAI !== 'false'; // default true
   try {
-    const zips = getLocations();
-    const results = await Promise.all(
-      zips.map((zip) =>
-        watchLocation(zip).catch((err) => {
-          console.error(`Location watch failed for ${zip}:`, err.message);
-          return { zip, city: null, state: null, alerts: [], news: [], error: err.message };
-        })
-      )
-    );
-
-    if (useAI) {
-      const newsTexts = results.flatMap((r) => (r.news || []).map((n) => n.title));
-      if (newsTexts.length) {
-        try {
-          const scores = await scoreTexts(newsTexts);
-          let i = 0;
-          for (const r of results) {
-            for (const n of r.news || []) n.score = scores[i++];
-          }
-        } catch (err) {
-          // Same graceful-degradation pattern as /api/threats — a scoring
-          // failure shouldn't take down the whole locations response.
-          console.error('Location news scoring unavailable:', err.message);
-        }
-      }
-    }
-
+    const zips = await getLocations(req.user.id);
+    const results = await getWatchedLocationsWithNews(zips, { useAI });
     res.json({ locations: results });
   } catch (err) {
     console.error('Locations aggregation error:', err);
@@ -327,49 +304,49 @@ app.get('/api/darkweb', async (req, res) => {
 
 // ---- Persistent dark web monitoring ("Monitored Addresses") ----
 
-app.get('/api/darkweb/monitored', (req, res) => {
-  res.json({ emails: getMonitoredEmails() });
+app.get('/api/darkweb/monitored', requireAuth, async (req, res) => {
+  res.json({ emails: await getMonitoredEmails(req.user.id) });
 });
 
-app.post('/api/darkweb/monitored', async (req, res) => {
+app.post('/api/darkweb/monitored', requireAuth, async (req, res) => {
   const { email } = req.body || {};
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Missing or invalid email' });
 
-  addMonitoredEmail(email);
+  await addMonitoredEmail(req.user.id, email);
   // Run an immediate check rather than waiting for the next monitor tick,
   // so adding an email shows a real result right away.
   const normalized = email.trim().toLowerCase();
   try {
     const result = await checkEmailExposure(normalized);
-    res.json({ emails: updateCheckResult(normalized, result) });
+    res.json({ emails: await updateCheckResult(req.user.id, normalized, result) });
   } catch (err) {
     console.error('Initial dark web check failed:', err.message);
-    res.json({ emails: updateCheckResult(normalized, { error: err.message }) });
+    res.json({ emails: await updateCheckResult(req.user.id, normalized, { error: err.message }) });
   }
 });
 
-app.delete('/api/darkweb/monitored', (req, res) => {
+app.delete('/api/darkweb/monitored', requireAuth, async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: 'Missing email' });
-  res.json({ emails: removeMonitoredEmail(email) });
+  res.json({ emails: await removeMonitoredEmail(req.user.id, email) });
 });
 
 // ---- In-app notifications (populated by runMonitorTick's detection pass) ----
 
-app.get('/api/notifications', (req, res) => {
-  res.json({ notifications: getNotifications(), unreadCount: getUnreadCount() });
+app.get('/api/notifications', requireAuth, async (req, res) => {
+  res.json({ notifications: await getNotifications(req.user.id), unreadCount: await getUnreadCount(req.user.id) });
 });
 
-app.post('/api/notifications/:id/read', (req, res) => {
-  res.json({ notifications: markRead(req.params.id) });
+app.post('/api/notifications/:id/read', requireAuth, async (req, res) => {
+  res.json({ notifications: await markRead(req.user.id, req.params.id) });
 });
 
-app.post('/api/notifications/read-all', (req, res) => {
-  res.json({ notifications: markAllRead() });
+app.post('/api/notifications/read-all', requireAuth, async (req, res) => {
+  res.json({ notifications: await markAllRead(req.user.id) });
 });
 
-app.delete('/api/notifications/:id', (req, res) => {
-  res.json({ notifications: clearNotification(req.params.id) });
+app.delete('/api/notifications/:id', requireAuth, async (req, res) => {
+  res.json({ notifications: await clearNotification(req.user.id, req.params.id) });
 });
 
 // ---- Threat Score (composite score + category breakdown, from history) ----
@@ -389,9 +366,9 @@ app.get('/api/threat-score/history', (req, res) => {
 
 // ---- Dashboard stats ----
 
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', requireAuth, async (req, res) => {
   const summary = getThreatScoreSummary();
-  const monitoredEmails = getMonitoredEmails();
+  const monitoredEmails = await getMonitoredEmails(req.user.id);
   const darkWebHits = {
     count: monitoredEmails.reduce((sum, e) => sum + (e.exposureCount || 0), 0),
     monitored: monitoredEmails.length
@@ -468,35 +445,57 @@ const MONITOR_INTERVAL_MS = (Number(process.env.MONITOR_INTERVAL_MINUTES) || 15)
 // so the notification center stays populated even for users who haven't
 // set up email — sendAlertEmail() below is a no-op when alerts aren't
 // configured.
+// Runs the per-user half of a monitor tick: this user's watched-location
+// news (their own AI-scoring pass, since each user has their own zip
+// list), a stale dark-web recheck, detection against the shared feed
+// threats + this user's locations/monitored emails, in-app notifications,
+// and (if configured) an alert email. Isolated in its own try/catch inside
+// the caller's loop so one user's failure (a bad zip, a mail send error)
+// doesn't stop the tick for everyone else.
+async function runUserMonitorPass(userId, threats) {
+  const zips = await getLocations(userId);
+  const locations = zips.length ? await getWatchedLocationsWithNews(zips, { useAI: true }) : [];
+
+  // Internally a no-op for any email checked more recently than
+  // DARKWEB_RECHECK_HOURS, so this is cheap on most ticks.
+  await refreshStaleMonitoredEmails(userId);
+  const monitoredEmails = await getMonitoredEmails(userId);
+
+  const detected = await detectNewAlertableItems(userId, { threats, locations, monitoredEmails });
+  const notificationItems = buildNotificationItems(detected);
+  if (notificationItems.length) await addNotifications(userId, notificationItems);
+  await sendAlertEmail(userId, detected);
+}
+
 async function runMonitorTick() {
-  let data;
+  let threats = [];
   try {
-    data = await collectSnapshotData(port);
-    recordSnapshot([...data.threats, ...data.locations.flatMap((l) => l.news || [])]);
+    const data = await collectSnapshotData(port);
+    threats = data.threats;
+    recordSnapshot(threats);
   } catch (err) {
     console.error('Monitor tick failed:', err.message);
   }
 
+  // The per-user pass needs Postgres (keywords/locations/monitored emails/
+  // alerts all live there as of Phase 2) — skip gracefully if it isn't
+  // configured yet, same reasoning as the migration guard in package.json.
+  if (!process.env.DATABASE_URL) return;
+
+  let users;
   try {
-    // Internally a no-op for any email checked more recently than
-    // DARKWEB_RECHECK_HOURS, so this is cheap on most ticks.
-    await refreshStaleMonitoredEmails();
+    users = await getDb().user.findMany({ select: { id: true } });
   } catch (err) {
-    console.error('Dark web monitor refresh failed:', err.message);
+    console.error('Monitor tick: failed to list users:', err.message);
+    return;
   }
 
-  if (!data) return;
-  try {
-    const detected = detectNewAlertableItems({
-      threats: data.threats,
-      locations: data.locations,
-      monitoredEmails: getMonitoredEmails()
-    });
-    const notificationItems = buildNotificationItems(detected);
-    if (notificationItems.length) addNotifications(notificationItems);
-    await sendAlertEmail(detected);
-  } catch (err) {
-    console.error('Alert detection failed:', err.message);
+  for (const { id: userId } of users) {
+    try {
+      await runUserMonitorPass(userId, threats);
+    } catch (err) {
+      console.error(`Monitor tick: per-user pass failed for user ${userId}:`, err.message);
+    }
   }
 }
 

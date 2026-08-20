@@ -1,45 +1,30 @@
 // utils/keywordStore.js
 //
-// Tracks a watchlist of keywords for the "Keywords Alert" dashboard
-// feature. Same persistence pattern as feedStore.js.
+// Tracks a per-user watchlist of keywords for the "Keywords Alert"
+// dashboard feature. Moved off flat JSON to Postgres in Phase 2 — see
+// prisma/schema.prisma's Keyword model and scripts/migrate-legacy-data.js
+// for the one-off import of the old shared list into account #1.
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from './db.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const keywordsFilePath = path.join(__dirname, '../data/keywords.json');
-
-function readKeywords() {
-  try {
-    return JSON.parse(fs.readFileSync(keywordsFilePath, 'utf-8'));
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    console.error('Failed to read keywords file:', err);
-    return [];
-  }
+export async function getKeywords(userId) {
+  const rows = await getDb().keyword.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  return rows.map((r) => r.value);
 }
 
-function writeKeywords(keywords) {
-  fs.writeFileSync(keywordsFilePath, JSON.stringify(keywords, null, 2));
-}
-
-export function getKeywords() {
-  return readKeywords();
-}
-
-export function addKeyword(keyword) {
-  const keywords = readKeywords();
+export async function addKeyword(userId, keyword) {
   const normalized = keyword.trim().toLowerCase();
-  if (!normalized || keywords.includes(normalized)) return keywords;
-  keywords.push(normalized);
-  writeKeywords(keywords);
-  return keywords;
+  if (!normalized) return getKeywords(userId);
+  await getDb().keyword.upsert({
+    where: { userId_value: { userId, value: normalized } },
+    create: { userId, value: normalized },
+    update: {}
+  });
+  return getKeywords(userId);
 }
 
-export function removeKeyword(keyword) {
+export async function removeKeyword(userId, keyword) {
   const normalized = keyword.trim().toLowerCase();
-  const keywords = readKeywords().filter((k) => k !== normalized);
-  writeKeywords(keywords);
-  return keywords;
+  await getDb().keyword.deleteMany({ where: { userId, value: normalized } });
+  return getKeywords(userId);
 }

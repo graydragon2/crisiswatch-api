@@ -1,61 +1,61 @@
 // utils/alertStore.js
 //
-// Persists email alert settings (enabled + recipient) and a rolling list of
-// already-alerted item keys, so the periodic checker doesn't re-send the
-// same story/alert every interval. Same persistence pattern as the other
-// stores in this project.
+// Persists per-user email alert settings (enabled + recipient) and a
+// rolling list of already-alerted item keys, so the periodic checker
+// doesn't re-send the same story/alert every interval. Moved off flat JSON
+// to Postgres in Phase 2 — see prisma/schema.prisma's AlertSetting and
+// SeenAlertKey models.
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getDb } from './db.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const alertsFilePath = path.join(__dirname, '../data/alerts.json');
-
-// Bounds the "seen" list so the file doesn't grow forever.
+// Bounds the seen-key table per user so it doesn't grow forever.
 const MAX_SEEN = 500;
 
-const DEFAULTS = { enabled: false, recipient: '', seen: [] };
-
-function readState() {
-  try {
-    return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(alertsFilePath, 'utf-8')) };
-  } catch (err) {
-    if (err.code === 'ENOENT') return { ...DEFAULTS };
-    console.error('Failed to read alerts file:', err);
-    return { ...DEFAULTS };
-  }
+export async function getAlertSettings(userId) {
+  const row = await getDb().alertSetting.findUnique({ where: { userId } });
+  return { enabled: row?.enabled ?? false, recipient: row?.recipient ?? '' };
 }
 
-function writeState(state) {
-  fs.writeFileSync(alertsFilePath, JSON.stringify(state, null, 2));
+export async function updateAlertSettings(userId, { enabled, recipient }) {
+  const data = {};
+  if (typeof enabled === 'boolean') data.enabled = enabled;
+  if (typeof recipient === 'string') data.recipient = recipient.trim();
+
+  const row = await getDb().alertSetting.upsert({
+    where: { userId },
+    create: { userId, enabled: data.enabled ?? false, recipient: data.recipient ?? '' },
+    update: data
+  });
+  return { enabled: row.enabled, recipient: row.recipient };
 }
 
-export function getAlertSettings() {
-  const { enabled, recipient } = readState();
-  return { enabled, recipient };
-}
-
-export function updateAlertSettings({ enabled, recipient }) {
-  const state = readState();
-  if (typeof enabled === 'boolean') state.enabled = enabled;
-  if (typeof recipient === 'string') state.recipient = recipient.trim();
-  writeState(state);
-  return { enabled: state.enabled, recipient: state.recipient };
-}
-
-export function filterUnseen(keys) {
-  const { seen } = readState();
-  const seenSet = new Set(seen);
+export async function filterUnseen(userId, keys) {
+  if (!keys.length) return [];
+  const rows = await getDb().seenAlertKey.findMany({
+    where: { userId, key: { in: keys } },
+    select: { key: true }
+  });
+  const seenSet = new Set(rows.map((r) => r.key));
   return keys.filter((k) => !seenSet.has(k));
 }
 
-export function markSeen(keys) {
+export async function markSeen(userId, keys) {
   if (!keys.length) return;
-  const state = readState();
-  const seenSet = new Set(state.seen);
-  keys.forEach((k) => seenSet.add(k));
-  // Keep only the most recent MAX_SEEN entries.
-  state.seen = [...seenSet].slice(-MAX_SEEN);
-  writeState(state);
+  const db = getDb();
+  await db.seenAlertKey.createMany({
+    data: keys.map((key) => ({ userId, key })),
+    skipDuplicates: true
+  });
+
+  // Keep only the most recent MAX_SEEN rows for this user.
+  const total = await db.seenAlertKey.count({ where: { userId } });
+  if (total > MAX_SEEN) {
+    const stale = await db.seenAlertKey.findMany({
+      where: { userId },
+      orderBy: { seenAt: 'asc' },
+      take: total - MAX_SEEN,
+      select: { id: true }
+    });
+    await db.seenAlertKey.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
+  }
 }
