@@ -33,6 +33,18 @@ const port = process.env.PORT || 3001;
 app.use(express.json());
 app.use(cors());
 
+// Every route here is either live-scored (threats, locations, stats) or
+// per-user auth-scoped data — nothing should ever be cached by an
+// intermediate proxy or the browser. Without this, a plain reload (as
+// opposed to a cache-bypassing hard reload) can serve a stale response —
+// this is what was masking the threatScorer.js batch-fallback fix: the
+// browser kept re-serving a cached pre-fix /api/threats response with no
+// scores, even after the backend itself was already fixed.
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // Some source feeds present bad/self-signed certs; bypass for parsing only.
 // A real User-Agent matters too — some providers block/reset connections
 // from requests with no or generic User-Agent headers. Two parser instances
