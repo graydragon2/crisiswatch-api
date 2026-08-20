@@ -74,6 +74,15 @@ export async function createPortalSession(userId) {
  * User row owns its Stripe Customer.
  * @param {import('stripe').Stripe.Subscription} subscription
  */
+function currentPeriodEndOf(subscription) {
+  // Newer Stripe API versions moved current_period_end off the Subscription
+  // object itself and onto each subscription item (a subscription can have
+  // multiple items with different billing periods now) — fall back to the
+  // old top-level field for older API versions/accounts.
+  const raw = subscription.items?.data?.[0]?.current_period_end ?? subscription.current_period_end;
+  return typeof raw === 'number' ? new Date(raw * 1000) : null;
+}
+
 async function syncSubscription(subscription) {
   const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id;
   await getDb().user.updateMany({
@@ -81,7 +90,7 @@ async function syncSubscription(subscription) {
     data: {
       stripeSubscriptionId: subscription.id,
       subscriptionStatus: subscription.status,
-      currentPeriodEnd: new Date(subscription.current_period_end * 1000)
+      currentPeriodEnd: currentPeriodEndOf(subscription)
     }
   });
 }
