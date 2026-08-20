@@ -53,6 +53,22 @@ function chunk(arr, size) {
   return out;
 }
 
+// Batches run concurrently and are independent, but Promise.all() means one
+// failing batch (rate limit, timeout, refusal) would discard every other
+// batch's results too — the whole /api/threats response would fall back to
+// fully unscored, even though most items scored fine. Promise.allSettled()
+// plus a per-batch fallback means a flaky batch only degrades its own
+// items, not the entire response.
+async function runBatches(texts, batchFn, fallbackItem) {
+  const batches = chunk(texts, BATCH_SIZE);
+  const settled = await Promise.allSettled(batches.map((batch) => batchFn(batch)));
+  return settled.flatMap((result, i) => {
+    if (result.status === 'fulfilled') return result.value;
+    console.error('Threat scoring batch failed, falling back for this batch only:', result.reason?.message);
+    return batches[i].map(() => fallbackItem());
+  });
+}
+
 async function scoreBatch(texts) {
   const numbered = texts.map((t, i) => `[${i}] ${t}`).join('\n\n');
 
@@ -98,13 +114,11 @@ export async function scoreText(text) {
  */
 export async function scoreTexts(texts) {
   if (!texts.length) return [];
-  const batches = chunk(texts, BATCH_SIZE);
   // Batches are independent — run them concurrently rather than one after
   // another, so total time is bounded by the slowest single batch instead
   // of the sum of all of them (this mattered a lot once feed count, and so
   // item count, grew).
-  const results = await Promise.all(batches.map((batch) => scoreBatch(batch)));
-  return results.flat();
+  return runBatches(texts, scoreBatch, () => 1);
 }
 
 export const THREAT_CATEGORIES = [
@@ -187,8 +201,6 @@ async function scoreAndLocateBatch(texts) {
  */
 export async function scoreAndLocateTexts(texts) {
   if (!texts.length) return [];
-  const batches = chunk(texts, BATCH_SIZE);
   // Same reasoning as scoreTexts() — independent batches, run concurrently.
-  const results = await Promise.all(batches.map((batch) => scoreAndLocateBatch(batch)));
-  return results.flat();
+  return runBatches(texts, scoreAndLocateBatch, () => ({ score: 1, country: null, category: 'Other' }));
 }
