@@ -25,6 +25,7 @@ import { createMagicLinkToken, redeemMagicLinkToken, signSession, requireAuth } 
 import { getWatchedLocationsWithNews } from './utils/locationsAggregator.js';
 import { getDb } from './utils/db.js';
 import { createCheckoutSession, createPortalSession, handleWebhookEvent, getSubscriptionStatus } from './utils/billing.js';
+import { threatsCacheKey, getOrComputeThreats } from './utils/threatsCache.js';
 import { getFrontendUrl } from './utils/frontendUrl.js';
 
 dotenv.config();
@@ -318,41 +319,45 @@ app.get('/api/threats', async (req, res) => {
       .filter(Boolean);
     const useAI = req.query.useAI !== 'false'; // default true
 
-    let feeds = getFeeds();
-    if (sources.length) {
-      feeds = feeds.filter((f) => sources.some((s) => (f.title || f.url).toLowerCase().includes(s)));
-    }
-
-    const parsedFeeds = await Promise.all(feeds.map((f) => fetchFeedItems(f, 20)));
-
-    let threats = parsedFeeds.flatMap((feed) =>
-      feed.items.map((item) => ({ ...item, source: feed.title }))
-    );
-
-    if (keywords.length) {
-      threats = threats.filter((item) =>
-        keywords.some((kw) =>
-          (item.title || '').toLowerCase().includes(kw) || (item.summary || '').toLowerCase().includes(kw)
-        )
-      );
-    }
-
-    if (useAI && threats.length) {
-      try {
-        const analyses = await scoreAndLocateTexts(threats.map((t) => `${t.title}. ${t.summary}`));
-        threats = threats.map((t, i) => ({
-          ...t,
-          score: analyses[i].score,
-          location: analyses[i].country,
-          coordinates: resolveCoordinates(analyses[i].country),
-          category: analyses[i].category
-        }));
-      } catch (err) {
-        // AI scoring is best-effort (e.g. ANTHROPIC_API_KEY not configured yet) —
-        // don't fail the whole feed just because scoring/geolocation is unavailable.
-        console.error('AI scoring/geolocation unavailable, returning unscored threats:', err.message);
+    const threats = await getOrComputeThreats(threatsCacheKey({ keywords, sources, useAI }), async () => {
+      let feeds = getFeeds();
+      if (sources.length) {
+        feeds = feeds.filter((f) => sources.some((s) => (f.title || f.url).toLowerCase().includes(s)));
       }
-    }
+
+      const parsedFeeds = await Promise.all(feeds.map((f) => fetchFeedItems(f, 20)));
+
+      let result = parsedFeeds.flatMap((feed) =>
+        feed.items.map((item) => ({ ...item, source: feed.title }))
+      );
+
+      if (keywords.length) {
+        result = result.filter((item) =>
+          keywords.some((kw) =>
+            (item.title || '').toLowerCase().includes(kw) || (item.summary || '').toLowerCase().includes(kw)
+          )
+        );
+      }
+
+      if (useAI && result.length) {
+        try {
+          const analyses = await scoreAndLocateTexts(result.map((t) => `${t.title}. ${t.summary}`));
+          result = result.map((t, i) => ({
+            ...t,
+            score: analyses[i].score,
+            location: analyses[i].country,
+            coordinates: resolveCoordinates(analyses[i].country),
+            category: analyses[i].category
+          }));
+        } catch (err) {
+          // AI scoring is best-effort (e.g. ANTHROPIC_API_KEY not configured yet) —
+          // don't fail the whole feed just because scoring/geolocation is unavailable.
+          console.error('AI scoring/geolocation unavailable, returning unscored threats:', err.message);
+        }
+      }
+
+      return result;
+    });
 
     res.json({ threats });
   } catch (err) {
@@ -503,7 +508,12 @@ app.post('/api/phishing/analyze', express.json({ limit: '8mb' }), async (req, re
   }
 });
 
-const MONITOR_INTERVAL_MS = (Number(process.env.MONITOR_INTERVAL_MINUTES) || 15) * 60 * 1000;
+// Default bumped from 15 to 30 — each tick does a full AI-scoring pass
+// (global feed threats, plus another per user for their watched
+// locations), so halving tick frequency directly halves that cost. Real
+// subscribers can still set MONITOR_INTERVAL_MINUTES tighter if a 30-min
+// alert lag genuinely matters for them.
+const MONITOR_INTERVAL_MS = (Number(process.env.MONITOR_INTERVAL_MINUTES) || 30) * 60 * 1000;
 
 // One shared data collection per tick, feeding the history snapshot, the
 // in-app notification center, and email alerts — previously each self-
