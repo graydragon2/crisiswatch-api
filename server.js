@@ -1,15 +1,12 @@
 // server.js
 import express from 'express';
-import fetch from 'node-fetch';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import Parser from 'rss-parser';
-import https from 'https';
 import { getFeeds, addFeed, removeFeed } from './utils/feedStore.js';
+import { fetchFeedItems } from './utils/feedFetcher.js';
 import { getKeywords, addKeyword, removeKeyword } from './utils/keywordStore.js';
 import { getLocations, addLocation, removeLocation } from './utils/locationStore.js';
-import { scoreText, scoreAndLocateTexts } from './utils/threatScorer.js';
-import { resolveCoordinates } from './utils/geoLookup.js';
+import { scoreText } from './utils/threatScorer.js';
 import { getAlertSettings, updateAlertSettings } from './utils/alertStore.js';
 import { isMailerConfigured, sendMail } from './utils/mailer.js';
 import { sendAlertEmail } from './utils/alertChecker.js';
@@ -25,7 +22,7 @@ import { createMagicLinkToken, redeemMagicLinkToken, signSession, requireAuth } 
 import { getWatchedLocationsWithNews } from './utils/locationsAggregator.js';
 import { getDb } from './utils/db.js';
 import { createCheckoutSession, createPortalSession, handleWebhookEvent, getSubscriptionStatus } from './utils/billing.js';
-import { threatsCacheKey, getOrComputeThreats } from './utils/threatsCache.js';
+import { getThreats } from './utils/threatsAggregator.js';
 import { getFrontendUrl } from './utils/frontendUrl.js';
 
 dotenv.config();
@@ -74,35 +71,6 @@ app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();
 });
-
-// Some source feeds present bad/self-signed certs; bypass for parsing only.
-// A real User-Agent matters too — some providers block/reset connections
-// from requests with no or generic User-Agent headers. Two parser instances
-// since an https.Agent can't be used against a plain http:// feed URL (some
-// legacy RSS subdomains, e.g. CNN's, don't support TLS at all).
-const FEED_TIMEOUT_MS = 10000;
-const parserHeaders = { 'User-Agent': 'CrisisWatchBot/1.0' };
-const httpsParser = new Parser({
-  headers: parserHeaders,
-  timeout: FEED_TIMEOUT_MS,
-  requestOptions: { agent: new https.Agent({ rejectUnauthorized: false }) }
-});
-const httpParser = new Parser({ headers: parserHeaders, timeout: FEED_TIMEOUT_MS });
-
-function parserFor(url) {
-  return url.startsWith('http://') ? httpParser : httpsParser;
-}
-
-// Belt-and-braces on top of rss-parser's own `timeout` option — a feed that
-// hangs the connection rather than erroring outright would otherwise stall
-// the whole Promise.all() in /api/feeds and /api/threats indefinitely, since
-// neither has any other timeout.
-function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms))
-  ]);
-}
 
 app.get('/', (req, res) => {
   res.send('CrisisWatch API is live');
@@ -215,27 +183,13 @@ app.post('/api/alerts/test', requireAuth, async (req, res) => {
   }
 });
 
-async function fetchFeedItems(feed, limit = 5) {
-  try {
-    const parsed = await withTimeout(parserFor(feed.url).parseURL(feed.url), FEED_TIMEOUT_MS);
-    return {
-      url: feed.url,
-      title: feed.title || parsed.title || feed.url,
-      ok: true,
-      items: parsed.items.slice(0, limit).map((item) => ({
-        title: item.title,
-        link: item.link,
-        pubDate: item.pubDate || item.isoDate,
-        summary: item.contentSnippet || item.content || ''
-      }))
-    };
-  } catch (err) {
-    console.error(`RSS parse error for ${feed.url}:`, err.message);
-    return { url: feed.url, title: feed.title || feed.url, ok: false, error: err.message, items: [] };
-  }
-}
-
 // ---- Feeds ----
+//
+// GET stays public — a read-only, cost-free display of the shared source
+// list. POST/DELETE now require auth: with no gate at all, anyone who
+// found this API's URL (trivially discoverable — it's embedded in the
+// frontend's public JS bundle) could wipe or spam the one shared feed
+// list for every user.
 
 app.get('/api/feeds', async (req, res) => {
   try {
@@ -247,14 +201,14 @@ app.get('/api/feeds', async (req, res) => {
   }
 });
 
-app.post('/api/feeds', (req, res) => {
+app.post('/api/feeds', requireAuth, (req, res) => {
   const { url } = req.body || {};
   if (!url) return res.status(400).json({ error: 'Missing url' });
   const feeds = addFeed(url);
   res.json({ feeds });
 });
 
-app.delete('/api/feeds', (req, res) => {
+app.delete('/api/feeds', requireAuth, (req, res) => {
   const { url } = req.body || {};
   if (!url) return res.status(400).json({ error: 'Missing url' });
   const feeds = removeFeed(url);
@@ -306,8 +260,15 @@ app.get('/api/locations', requireAuth, async (req, res) => {
 });
 
 // ---- Threats (aggregated feed items, optional keyword/source filter, optional AI scoring) ----
+//
+// 🔒 requires auth — this is the single most expensive route in the app
+// (a live Claude scoring pass per unique keywords/sources/useAI
+// combination, cached but not rate-limited). Only ever called from
+// authenticated dashboard pages; leaving it open to anyone who found the
+// API's URL was a real unbounded-cost exposure — varying `keywords`
+// defeats the cache entirely.
 
-app.get('/api/threats', async (req, res) => {
+app.get('/api/threats', requireAuth, async (req, res) => {
   try {
     const keywords = (req.query.keywords || '')
       .split(',')
@@ -319,46 +280,7 @@ app.get('/api/threats', async (req, res) => {
       .filter(Boolean);
     const useAI = req.query.useAI !== 'false'; // default true
 
-    const threats = await getOrComputeThreats(threatsCacheKey({ keywords, sources, useAI }), async () => {
-      let feeds = getFeeds();
-      if (sources.length) {
-        feeds = feeds.filter((f) => sources.some((s) => (f.title || f.url).toLowerCase().includes(s)));
-      }
-
-      const parsedFeeds = await Promise.all(feeds.map((f) => fetchFeedItems(f, 20)));
-
-      let result = parsedFeeds.flatMap((feed) =>
-        feed.items.map((item) => ({ ...item, source: feed.title }))
-      );
-
-      if (keywords.length) {
-        result = result.filter((item) =>
-          keywords.some((kw) =>
-            (item.title || '').toLowerCase().includes(kw) || (item.summary || '').toLowerCase().includes(kw)
-          )
-        );
-      }
-
-      if (useAI && result.length) {
-        try {
-          const analyses = await scoreAndLocateTexts(result.map((t) => `${t.title}. ${t.summary}`));
-          result = result.map((t, i) => ({
-            ...t,
-            score: analyses[i].score,
-            location: analyses[i].country,
-            coordinates: resolveCoordinates(analyses[i].country),
-            category: analyses[i].category
-          }));
-        } catch (err) {
-          // AI scoring is best-effort (e.g. ANTHROPIC_API_KEY not configured yet) —
-          // don't fail the whole feed just because scoring/geolocation is unavailable.
-          console.error('AI scoring/geolocation unavailable, returning unscored threats:', err.message);
-        }
-      }
-
-      return result;
-    });
-
+    const threats = await getThreats({ keywords, sources, useAI });
     res.json({ threats });
   } catch (err) {
     console.error('Threats aggregation error:', err);
@@ -367,8 +289,13 @@ app.get('/api/threats', async (req, res) => {
 });
 
 // ---- Dark web check (LeakCheck) ----
+//
+// 🔒 requires auth — an open proxy onto LeakCheck would let anyone mass
+// query arbitrary email addresses through this API for free, which is
+// both a real cost on a paid third-party API and a privacy/abuse vector
+// unrelated to this app's own users.
 
-app.get('/api/darkweb', async (req, res) => {
+app.get('/api/darkweb', requireAuth, async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).json({ error: 'Missing email' });
   try {
@@ -463,8 +390,12 @@ app.get('/api/stats', requireAuth, async (req, res) => {
 });
 
 // ---- AI scoring ----
+//
+// 🔒 requires auth — an open, unauthenticated Claude-calling endpoint with
+// no rate limit is a direct unbounded-cost exposure. Only ever called
+// from the authenticated Manual Threat Scorer tool.
 
-app.post('/api/score', async (req, res) => {
+app.post('/api/score', requireAuth, async (req, res) => {
   const { text } = req.body || {};
   if (!text) return res.status(400).json({ error: 'Missing text' });
   try {
@@ -478,10 +409,15 @@ app.post('/api/score', async (req, res) => {
 
 // ---- Phishing Detection ----
 //
+// 🔒 requires auth — same reasoning as /api/score, and this one's even
+// more expensive (vision calls, larger max_tokens). requireAuth runs
+// before the route's own body parser below, so an unauthenticated request
+// is rejected before this API ever spends time parsing an up-to-8mb body.
+//
 // A larger JSON body limit is scoped to just this route (base64-encoded
 // screenshots need more than the 100kb default) rather than raised
 // globally, so every other endpoint keeps the smaller default.
-app.post('/api/phishing/analyze', express.json({ limit: '8mb' }), async (req, res) => {
+app.post('/api/phishing/analyze', requireAuth, express.json({ limit: '8mb' }), async (req, res) => {
   const { type, content, mediaType } = req.body || {};
   if (!ANALYSIS_TYPES.includes(type)) {
     return res.status(400).json({ error: `type must be one of: ${ANALYSIS_TYPES.join(', ')}` });
@@ -552,7 +488,7 @@ async function runUserMonitorPass(userId, threats) {
 async function runMonitorTick() {
   let threats = [];
   try {
-    const data = await collectSnapshotData(port);
+    const data = await collectSnapshotData();
     threats = data.threats;
     recordSnapshot(threats);
   } catch (err) {
